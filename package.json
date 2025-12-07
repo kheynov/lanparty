@@ -1,0 +1,14 @@
+{
+  "name": "lanparty-astro-game",
+  "version": "1.0.0",
+  "description": "Multiplayer space battle game with mobile controls",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "ws": "^8.14.2",
+    "express": "^4.18.2"
+  }
+}
+
