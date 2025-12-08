@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Astro Party - Game Display</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        background: #000;
+        font-family: "Arial", sans-serif;
+        overflow: hidden;
+        position: relative;
+      }
+
+      #gameContainer {
+        position: relative;
+        background: #0a0a1a;
+        border: 2px solid #333;
+        box-shadow: 0 0 50px rgba(100, 150, 255, 0.3);
+      }
+
+      #gameCanvas {
+        display: block;
+      }
+
+      #status {
+        position: absolute;
+        top: 20px;
+        right: 20px;
+        color: #fff;
+        font-size: 18px;
+        z-index: 10;
+        background: rgba(0, 0, 0, 0.7);
+        padding: 15px;
+        border-radius: 10px;
+      }
+
+      #startButton {
+        position: absolute;
+        bottom: 30px;
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 20px 50px;
+        font-size: 24px;
+        font-weight: bold;
+        color: #fff;
+        background: linear-gradient(
+          135deg,
+          rgba(46, 204, 113, 0.9),
+          rgba(39, 174, 96, 0.9)
+        );
+        border: 3px solid rgba(255, 255, 255, 0.5);
+        border-radius: 30px;
+        cursor: pointer;
+        transition: all 0.2s;
+        backdrop-filter: blur(10px);
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+        z-index: 10;
+        display: none;
+      }
+
+      #startButton:hover {
+        transform: translateX(-50%) scale(1.05);
+        background: linear-gradient(
+          135deg,
+          rgba(46, 204, 113, 1),
+          rgba(39, 174, 96, 1)
+        );
+      }
+
+      #startButton:active {
+        transform: translateX(-50%) scale(0.95);
+      }
+
+      #startButton:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      #lobby {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        color: #fff;
+        text-align: center;
+        z-index: 10;
+        background: rgba(0, 0, 0, 0.8);
+        padding: 40px 60px;
+        border-radius: 20px;
+        border: 3px solid rgba(255, 255, 255, 0.3);
+        backdrop-filter: blur(10px);
+        min-width: 400px;
+        display: none;
+      }
+
+      #lobby h2 {
+        font-size: 36px;
+        margin-bottom: 30px;
+        text-shadow: 0 0 20px rgba(100, 150, 255, 0.8);
+      }
+
+      #lobbyPlayersList {
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 15px;
+        padding: 20px;
+        margin-bottom: 20px;
+        max-height: 400px;
+        overflow-y: auto;
+      }
+
+      .lobbyPlayerItem {
+        display: flex;
+        align-items: center;
+        padding: 15px;
+        margin-bottom: 10px;
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 10px;
+        font-size: 20px;
+        transition: all 0.2s;
+      }
+
+      .lobbyPlayerItem:hover {
+        background: rgba(255, 255, 255, 0.2);
+        transform: translateX(5px);
+      }
+
+      .lobbyPlayerColor {
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        margin-right: 15px;
+        border: 2px solid rgba(255, 255, 255, 0.5);
+        box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+      }
+
+      #lobbyStatus {
+        font-size: 18px;
+        color: rgba(255, 255, 255, 0.7);
+        margin-top: 20px;
+      }
+
+      .waiting {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        color: #fff;
+        font-size: 24px;
+        text-align: center;
+        z-index: 10;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="gameContainer">
+      <canvas id="gameCanvas"></canvas>
+      <div id="status">
+        <div id="connectionStatus">Подключение...</div>
+      </div>
+      <button id="startButton">Начать игру</button>
+      <div id="lobby">
+        <h2>🚀 Комната ожидания</h2>
+        <div id="lobbyPlayersList"></div>
+        <div id="lobbyStatus">Ожидание игроков...</div>
+      </div>
+      <div id="waiting" class="waiting" style="display: none">
+        <h2>Ожидание игроков...</h2>
+        <p>Откройте /control.html на устройстве управления</p>
+      </div>
+    </div>
+
+    <script>
+      const canvas = document.getElementById("gameCanvas");
+      const ctx = canvas.getContext("2d");
+      const connectionStatusEl = document.getElementById("connectionStatus");
+      const waitingEl = document.getElementById("waiting");
+      const startButtonEl = document.getElementById("startButton");
+      const lobbyEl = document.getElementById("lobby");
+      const lobbyPlayersListEl = document.getElementById("lobbyPlayersList");
+      const lobbyStatusEl = document.getElementById("lobbyStatus");
+
+      // Set canvas size
+      canvas.width = 1920;
+      canvas.height = 1080;
+
+      // Scale canvas to fit screen
+      function resizeCanvas() {
+        const container = document.getElementById("gameContainer");
+        const scale = Math.min(
+          window.innerWidth / canvas.width,
+          window.innerHeight / canvas.height
+        );
+
+        container.style.width = `${canvas.width}px`;
+        container.style.height = `${canvas.height}px`;
+        container.style.transform = `translate(-50%, -50%) scale(${scale})`;
+        container.style.position = "absolute";
+        container.style.left = "50%";
+        container.style.top = "50%";
+      }
+
+      resizeCanvas();
+      window.addEventListener("resize", resizeCanvas);
+
+      // Предотвращение спящего режима
+      let wakeLock = null;
+      let noSleepInterval = null;
+
+      async function preventSleep() {
+        // Пробуем использовать Wake Lock API (современные браузеры)
+        if ("wakeLock" in navigator) {
+          try {
+            wakeLock = await navigator.wakeLock.request("screen");
+            console.log("Wake Lock активирован");
+
+            // Обработка потери Wake Lock (например, при переключении вкладок)
+            wakeLock.addEventListener("release", () => {
+              console.log("Wake Lock освобожден");
+            });
+          } catch (err) {
+            console.log("Wake Lock не доступен:", err);
+            // Fallback на альтернативный метод
+            useNoSleepFallback();
+          }
+        } else {
+          // Fallback для браузеров без Wake Lock API
+          useNoSleepFallback();
+        }
+      }
+
+      function useNoSleepFallback() {
+        // Альтернативный метод: периодически перемещаем невидимый элемент
+        // Это предотвращает переход системы в спящий режим
+        const noSleepVideo = document.createElement("video");
+        noSleepVideo.setAttribute("playsinline", "");
+        noSleepVideo.setAttribute("muted", "");
+        noSleepVideo.setAttribute("loop", "");
+        noSleepVideo.setAttribute("autoplay", "");
+        noSleepVideo.style.position = "fixed";
+        noSleepVideo.style.width = "1px";
+        noSleepVideo.style.height = "1px";
+        noSleepVideo.style.opacity = "0";
+        noSleepVideo.style.pointerEvents = "none";
+        noSleepVideo.style.zIndex = "-1";
+
+        // Создаем минимальный видео-стрим (1x1 пиксель, черный)
+        const canvas = document.createElement("canvas");
+        canvas.width = 1;
+        canvas.height = 1;
+        const ctx = canvas.getContext("2d");
+        ctx.fillStyle = "#000";
+        ctx.fillRect(0, 0, 1, 1);
+
+        const stream = canvas.captureStream(1); // 1 FPS достаточно
+        noSleepVideo.srcObject = stream;
+        document.body.appendChild(noSleepVideo);
+
+        noSleepVideo.play().catch(() => {
+          // Если не удалось, используем еще более простой метод
+          useSimpleNoSleep();
+        });
+      }
+
+      function useSimpleNoSleep() {
+        // Самый простой fallback: периодически обновляем заголовок страницы
+        // Это не идеально, но может помочь в некоторых случаях
+        let counter = 0;
+        noSleepInterval = setInterval(() => {
+          document.title =
+            document.title === "Astro Party - Game Display"
+              ? "Astro Party - Game Display "
+              : "Astro Party - Game Display";
+          counter++;
+          if (counter > 1000) counter = 0; // Сброс для избежания переполнения
+        }, 30000); // Каждые 30 секунд
+      }
+
+      // Активируем предотвращение сна при загрузке страницы
+      preventSleep();
+
+      // Повторно активируем при возврате фокуса (если Wake Lock был потерян)
+      document.addEventListener("visibilitychange", async () => {
+        if (!document.hidden && wakeLock === null) {
+          await preventSleep();
+        }
+      });
+
+      let gameState = {
+        state: "lobby",
+        hostId: null,
+        players: [],
+        bullets: [],
+        results: [],
+      };
+
+      const ws = new WebSocket(`ws://${window.location.host}/display`);
+
+      ws.onopen = () => {
+        connectionStatusEl.textContent = "Подключено";
+        connectionStatusEl.style.color = "#0f0";
+      };
+
+      ws.onmessage = (event) => {
+        const message = JSON.parse(event.data);
+
+        if (message.type === "gameState") {
+          gameState = message.data;
+
+          // Update status based on game state
+          if (gameState.state === "lobby") {
+            connectionStatusEl.textContent = "Лобби - ожидание игроков";
+            updateLobby();
+          } else if (gameState.state === "playing") {
+            connectionStatusEl.textContent = "Игра идет";
+            lobbyEl.style.display = "none";
+            waitingEl.style.display = "none";
+            startButtonEl.style.display = "none";
+          } else if (gameState.state === "finished") {
+            connectionStatusEl.textContent = "Раунд завершен";
+            lobbyEl.style.display = "none";
+            startButtonEl.style.display = "none";
+          }
+        }
+      };
+
+      ws.onerror = () => {
+        connectionStatusEl.textContent = "Ошибка подключения";
+        connectionStatusEl.style.color = "#f00";
+      };
+
+      ws.onclose = () => {
+        connectionStatusEl.textContent = "Отключено";
+        connectionStatusEl.style.color = "#f00";
+      };
+
+      function updateLobby() {
+        const connectedPlayers = gameState.players.filter((p) => p.connected);
+
+        if (connectedPlayers.length === 0) {
+          lobbyEl.style.display = "none";
+          waitingEl.style.display = "block";
+        } else {
+          lobbyEl.style.display = "block";
+          waitingEl.style.display = "none";
+
+          // Update players list
+          lobbyPlayersListEl.innerHTML = "";
+          connectedPlayers.forEach((player) => {
+            const item = document.createElement("div");
+            item.className = "lobbyPlayerItem";
+            item.innerHTML = `
+              <div class="lobbyPlayerColor" style="background: ${player.color}"></div>
+              <span>${player.name}</span>
+            `;
+            lobbyPlayersListEl.appendChild(item);
+          });
+
+          // Update status message
+          if (connectedPlayers.length < 2) {
+            lobbyStatusEl.textContent = `Ожидание игроков... (${connectedPlayers.length}/2)`;
+            startButtonEl.style.display = "none";
+          } else {
+            lobbyStatusEl.textContent = `Игроков готово: ${connectedPlayers.length}`;
+            startButtonEl.style.display = "block";
+          }
+        }
+      }
+
+      // Draw stars background
+      const stars = [];
+      for (let i = 0; i < 200; i++) {
+        stars.push({
+          x: Math.random() * canvas.width,
+          y: Math.random() * canvas.height,
+          size: Math.random() * 2,
+          brightness: Math.random(),
+        });
+      }
+
+      function drawStars() {
+        ctx.save();
+        ctx.imageSmoothingEnabled = false;
+        ctx.fillStyle = "#fff";
+        stars.forEach((star) => {
+          ctx.globalAlpha = star.brightness;
+          // Pixel-art звезды - квадраты
+          const size = Math.max(1, Math.floor(star.size));
+          ctx.fillRect(
+            Math.floor(star.x) - size / 2,
+            Math.floor(star.y) - size / 2,
+            size,
+            size
+          );
+        });
+        ctx.globalAlpha = 1;
+        ctx.restore();
+      }
+
+      function drawShip(x, y, angle, color, alive, name, connected) {
+        const isDisconnected = connected === false;
+        const displayColor = isDisconnected ? "#888888" : color;
+        const shipSize = 30; // Размер корабля (длина от носа до хвоста)
+
+        ctx.save();
+
+        if (!alive || isDisconnected) {
+          ctx.globalAlpha = isDisconnected ? 0.5 : 0.3;
+        }
+
+        ctx.translate(x, y);
+        ctx.rotate(angle);
+
+        // Pixel-art style: disable anti-aliasing
+        ctx.imageSmoothingEnabled = false;
+
+        // Ship body - треугольная форма (pixel-art)
+        ctx.fillStyle = displayColor;
+        ctx.beginPath();
+        ctx.moveTo(shipSize, 0); // Нос корабля
+        ctx.lineTo(-shipSize * 0.6, -shipSize * 0.5); // Левый угол
+        ctx.lineTo(-shipSize * 0.3, 0); // Центр задней части
+        ctx.lineTo(-shipSize * 0.6, shipSize * 0.5); // Правый угол
+        ctx.closePath();
+        ctx.fill();
+
+        // Ship outline - белая обводка
+        ctx.strokeStyle = isDisconnected ? "#666" : "#ffffff";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // Engine glow (только если подключен)
+        if (!isDisconnected && alive) {
+          ctx.fillStyle = "#ffffff";
+          ctx.globalAlpha = 0.8;
+          // Два двигателя
+          ctx.fillRect(-shipSize * 0.5, -shipSize * 0.2, 4, 4);
+          ctx.fillRect(-shipSize * 0.5, shipSize * 0.2 - 4, 4, 4);
+        }
+
+        ctx.restore();
+        ctx.globalAlpha = 1;
+        ctx.imageSmoothingEnabled = true;
+
+        // Draw player name below ship
+        if (name) {
+          ctx.save();
+          ctx.globalAlpha = alive && connected !== false ? 1 : 0.5;
+          ctx.fillStyle = isDisconnected ? "#888" : "#fff";
+          ctx.font = "bold 14px monospace"; // Monospace для pixel-art стиля
+          ctx.textAlign = "center";
+          ctx.textBaseline = "top";
+
+          // Draw text shadow/outline for better visibility
+          ctx.strokeStyle = "#000";
+          ctx.lineWidth = 3;
+          ctx.strokeText(name, x, y + shipSize + 5);
+
+          // Draw text
+          ctx.fillText(name, x, y + shipSize + 5);
+          ctx.restore();
+        }
+      }
+
+      function drawBullet(x, y) {
+        ctx.save();
+        ctx.imageSmoothingEnabled = false;
+
+        // Pixel-art пуля - квадрат
+        ctx.fillStyle = "#ffff00";
+        ctx.fillRect(x - 3, y - 3, 6, 6);
+
+        // Обводка
+        ctx.strokeStyle = "#ffaa00";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x - 3, y - 3, 6, 6);
+
+        ctx.restore();
+      }
+
+      function gameLoop() {
+        // Clear canvas
+        ctx.fillStyle = "#0a0a1a";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Draw stars
+        drawStars();
+
+        // Draw bullets
+        gameState.bullets.forEach((bullet) => {
+          drawBullet(bullet.x, bullet.y);
+        });
+
+        // Draw players
+        // Draw players (only during playing state)
+        if (gameState.state === "playing") {
+          gameState.players.forEach((player) => {
+            drawShip(
+              player.x,
+              player.y,
+              player.angle,
+              player.color,
+              player.alive,
+              player.name,
+              player.connected
+            );
+          });
+        }
+
+        // Draw results overlay if finished
+        if (gameState.state === "finished") {
+          drawResults();
+        }
+
+        requestAnimationFrame(gameLoop);
+      }
+
+      // Draw results overlay
+      function drawResults() {
+        if (
+          gameState.state !== "finished" ||
+          !gameState.results ||
+          gameState.results.length === 0
+        )
+          return;
+
+        ctx.save();
+
+        // Semi-transparent background
+        ctx.fillStyle = "rgba(0, 0, 0, 0.8)";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Title with emoji
+        ctx.fillStyle = "#fff";
+        ctx.font = "bold 64px Arial";
+        ctx.textAlign = "center";
+        ctx.fillText("🏆 Результаты", canvas.width / 2, 150);
+        ctx.font = "bold 48px Arial";
+        ctx.fillText("раунда", canvas.width / 2, 210);
+
+        // Results cards
+        const startY = 300;
+        const cardHeight = 100;
+        const cardWidth = canvas.width * 0.9;
+        const cardX = (canvas.width - cardWidth) / 2;
+
+        gameState.results.forEach((result, index) => {
+          const y = startY + index * (cardHeight + 15);
+          const isWinner = index === 0 && result.alive;
+
+          // Card background
+          ctx.fillStyle = isWinner
+            ? "rgba(255, 215, 0, 0.15)"
+            : "rgba(255, 255, 255, 0.05)";
+          ctx.fillRect(cardX, y, cardWidth, cardHeight);
+
+          // Card border
+          ctx.strokeStyle = isWinner ? "#FFD700" : "rgba(255, 255, 255, 0.3)";
+          ctx.lineWidth = isWinner ? 4 : 2;
+          ctx.strokeRect(cardX, y, cardWidth, cardHeight);
+
+          // Place number
+          ctx.fillStyle = isWinner ? "#FFD700" : "#fff";
+          ctx.font = isWinner ? "bold 42px Arial" : "bold 36px Arial";
+          ctx.textAlign = "left";
+          ctx.fillText(`#${index + 1}`, cardX + 30, y + 60);
+
+          // Player color circle
+          ctx.fillStyle = result.color;
+          ctx.beginPath();
+          ctx.arc(cardX + 140, y + 50, 18, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = "rgba(255, 255, 255, 0.5)";
+          ctx.lineWidth = 2;
+          ctx.stroke();
+
+          // Player name
+          ctx.fillStyle = isWinner ? "#FFD700" : "#fff";
+          ctx.font = isWinner ? "bold 28px Arial" : "24px Arial";
+          ctx.textAlign = "left";
+          const maxNameWidth = cardWidth * 0.35;
+          const nameText = result.name;
+          const nameWidth = ctx.measureText(nameText).width;
+          if (nameWidth > maxNameWidth) {
+            // Truncate name if too long
+            let truncated = nameText;
+            while (
+              ctx.measureText(truncated + "...").width > maxNameWidth &&
+              truncated.length > 0
+            ) {
+              truncated = truncated.slice(0, -1);
+            }
+            ctx.fillText(truncated + "...", cardX + 180, y + 55);
+          } else {
+            ctx.fillText(nameText, cardX + 180, y + 55);
+          }
+
+          // Stats with icons - more compact
+          ctx.font = "24px Arial";
+          ctx.fillStyle = "rgba(255, 255, 255, 0.8)";
+          ctx.textAlign = "left";
+
+          // Kills (skull icon)
+          const statsX = cardX + cardWidth * 0.6;
+          ctx.fillText(`💀 ${result.kills}`, statsX, y + 55);
+
+          // Deaths (cross icon)
+          ctx.textAlign = "right";
+          ctx.fillText(`☠️ ${result.deaths}`, cardX + cardWidth - 30, y + 55);
+        });
+
+        // Footer
+        ctx.fillStyle = "#888";
+        ctx.font = "24px Arial";
+        ctx.textAlign = "center";
+        ctx.fillText(
+          "Возврат в лобби через несколько секунд...",
+          canvas.width / 2,
+          canvas.height - 80
+        );
+
+        ctx.restore();
+      }
+
+      startButtonEl.addEventListener("click", () => {
+        console.log("Start button clicked");
+        console.log("WebSocket state:", ws ? ws.readyState : "ws not defined");
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          console.log("Sending startGame message");
+          ws.send(JSON.stringify({ type: "startGame" }));
+        } else {
+          console.error("Cannot send startGame: WebSocket not open");
+        }
+      });
+
+      gameLoop();
+
+      // Очистка при закрытии страницы
+      window.addEventListener("beforeunload", () => {
+        if (wakeLock) {
+          wakeLock.release();
+        }
+        if (noSleepInterval) {
+          clearInterval(noSleepInterval);
+        }
+      });
+    </script>
+  </body>
+</html>

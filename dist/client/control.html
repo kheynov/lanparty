@@ -1,0 +1,1058 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, user-scalable=no"
+    />
+    <title>Astro Party - Player Control</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+        -webkit-tap-highlight-color: transparent;
+      }
+
+      body {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        font-family: "Arial", sans-serif;
+        overflow: hidden;
+        touch-action: none;
+      }
+
+      #status {
+        position: absolute;
+        top: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        color: #fff;
+        font-size: 16px;
+        text-align: center;
+        background: rgba(0, 0, 0, 0.5);
+        padding: 12px 20px;
+        border-radius: 25px;
+        z-index: 10;
+        max-width: 90%;
+        word-wrap: break-word;
+      }
+
+      #playerInfo {
+        position: absolute;
+        top: 100px;
+        left: 50%;
+        transform: translateX(-50%);
+        color: #fff;
+        font-size: 14px;
+        text-align: center;
+        background: rgba(0, 0, 0, 0.5);
+        padding: 10px 20px;
+        border-radius: 20px;
+        z-index: 10;
+        max-width: 90%;
+      }
+
+      #keyboardHint {
+        position: absolute;
+        bottom: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        color: rgba(255, 255, 255, 0.7);
+        font-size: 14px;
+        text-align: center;
+        background: rgba(0, 0, 0, 0.3);
+        padding: 10px 20px;
+        border-radius: 15px;
+        z-index: 10;
+        display: none;
+      }
+
+      #controls {
+        display: flex;
+        width: 100%;
+        max-width: 600px;
+        justify-content: space-between;
+        padding: 20px;
+        gap: 20px;
+      }
+
+      .button {
+        flex: 1;
+        height: 200px;
+        background: rgba(255, 255, 255, 0.2);
+        border: 3px solid rgba(255, 255, 255, 0.5);
+        border-radius: 30px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        color: #fff;
+        font-weight: bold;
+        cursor: pointer;
+        user-select: none;
+        transition: all 0.1s;
+        backdrop-filter: blur(10px);
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        gap: 10px;
+        padding: 20px;
+        box-sizing: border-box;
+      }
+
+      .button-icon {
+        font-size: 48px;
+        line-height: 1;
+        display: block;
+        text-align: center;
+        width: 100%;
+      }
+
+      .button-text {
+        font-size: 24px;
+        line-height: 1;
+        text-align: center;
+        display: block;
+        width: 100%;
+      }
+
+      .button:active {
+        transform: scale(0.95);
+        background: rgba(255, 255, 255, 0.3);
+        border-color: rgba(255, 255, 255, 0.8);
+      }
+
+      .button.left {
+        background: linear-gradient(
+          135deg,
+          rgba(52, 152, 219, 0.8),
+          rgba(41, 128, 185, 0.8)
+        );
+      }
+
+      .button.right {
+        background: linear-gradient(
+          135deg,
+          rgba(231, 76, 60, 0.8),
+          rgba(192, 57, 43, 0.8)
+        );
+      }
+
+      #waiting {
+        text-align: center;
+        color: #fff;
+        padding: 20px;
+      }
+
+      #waiting h2 {
+        font-size: 24px;
+        margin-bottom: 10px;
+      }
+
+      .spinner {
+        border: 4px solid rgba(255, 255, 255, 0.3);
+        border-top: 4px solid #fff;
+        border-radius: 50%;
+        width: 40px;
+        height: 40px;
+        animation: spin 1s linear infinite;
+        margin: 20px auto;
+      }
+
+      @keyframes spin {
+        0% {
+          transform: rotate(0deg);
+        }
+        100% {
+          transform: rotate(360deg);
+        }
+      }
+
+      #registration {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 30px;
+        max-width: 400px;
+        width: 100%;
+      }
+
+      #registration h2 {
+        color: #fff;
+        font-size: 28px;
+        margin-bottom: 30px;
+        text-align: center;
+      }
+
+      #nameInput {
+        width: 100%;
+        padding: 15px 20px;
+        font-size: 18px;
+        border: 3px solid rgba(255, 255, 255, 0.5);
+        border-radius: 25px;
+        background: rgba(255, 255, 255, 0.2);
+        color: #fff;
+        backdrop-filter: blur(10px);
+        margin-bottom: 20px;
+        text-align: center;
+      }
+
+      #nameInput::placeholder {
+        color: rgba(255, 255, 255, 0.7);
+      }
+
+      #nameInput:focus {
+        outline: none;
+        border-color: rgba(255, 255, 255, 0.8);
+        background: rgba(255, 255, 255, 0.3);
+      }
+
+      #joinButton {
+        width: 100%;
+        padding: 15px 30px;
+        font-size: 20px;
+        font-weight: bold;
+        color: #fff;
+        background: linear-gradient(
+          135deg,
+          rgba(46, 204, 113, 0.8),
+          rgba(39, 174, 96, 0.8)
+        );
+        border: 3px solid rgba(255, 255, 255, 0.5);
+        border-radius: 25px;
+        cursor: pointer;
+        transition: all 0.2s;
+        backdrop-filter: blur(10px);
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+      }
+
+      #joinButton:active {
+        transform: scale(0.95);
+      }
+
+      #joinButton:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      #lobby {
+        display: none;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 30px;
+        max-width: 500px;
+        width: 100%;
+      }
+
+      #lobby h2 {
+        color: #fff;
+        font-size: 28px;
+        margin-bottom: 20px;
+        text-align: center;
+      }
+
+      #playersList {
+        width: 100%;
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 15px;
+        padding: 20px;
+        margin-bottom: 20px;
+        max-height: 300px;
+        overflow-y: auto;
+      }
+
+      .playerItem {
+        display: flex;
+        align-items: center;
+        padding: 10px;
+        margin-bottom: 10px;
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 10px;
+        color: #fff;
+        overflow: hidden;
+      }
+
+      .playerItem span {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        flex: 1;
+        min-width: 0;
+      }
+
+      .playerColor {
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        margin-right: 10px;
+      }
+
+      #startButton {
+        width: 100%;
+        padding: 15px 30px;
+        font-size: 20px;
+        font-weight: bold;
+        color: #fff;
+        background: linear-gradient(
+          135deg,
+          rgba(46, 204, 113, 0.8),
+          rgba(39, 174, 96, 0.8)
+        );
+        border: 3px solid rgba(255, 255, 255, 0.5);
+        border-radius: 25px;
+        cursor: pointer;
+        transition: all 0.2s;
+        backdrop-filter: blur(10px);
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        display: none;
+      }
+
+      #startButton:active {
+        transform: scale(0.95);
+      }
+
+      #startButton:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      #results {
+        display: none;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+        max-width: 600px;
+        width: 100%;
+        box-sizing: border-box;
+      }
+
+      #results h2 {
+        color: #fff;
+        font-size: 24px;
+        margin-bottom: 20px;
+        text-align: center;
+        word-wrap: break-word;
+        max-width: 100%;
+      }
+
+      #resultsList {
+        width: 100%;
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 15px;
+        padding: 15px;
+        margin-bottom: 20px;
+        box-sizing: border-box;
+      }
+
+      @media (max-width: 480px) {
+        #results {
+          padding: 15px;
+        }
+
+        #results h2 {
+          font-size: 20px;
+          margin-bottom: 15px;
+        }
+
+        #resultsList {
+          padding: 12px;
+        }
+      }
+
+      .resultItem {
+        display: flex;
+        align-items: flex-start;
+        padding: 15px;
+        margin-bottom: 10px;
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 10px;
+        color: #fff;
+        width: 100%;
+        box-sizing: border-box;
+        gap: 10px;
+      }
+
+      .resultItem.winner {
+        background: rgba(255, 215, 0, 0.3);
+        border: 2px solid #ffd700;
+      }
+
+      .resultPlace {
+        font-size: 20px;
+        font-weight: bold;
+        margin-right: 10px;
+        min-width: 40px;
+        flex-shrink: 0;
+      }
+
+      .resultName {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        min-width: 0;
+        margin-right: 10px;
+        overflow: hidden;
+      }
+
+      .resultName span {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        max-width: 100%;
+      }
+
+      .resultStats {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        font-size: 14px;
+        flex-shrink: 0;
+        text-align: right;
+        min-width: 120px;
+      }
+
+      .resultStats span {
+        white-space: nowrap;
+      }
+
+      @media (max-width: 480px) {
+        .resultItem {
+          flex-wrap: wrap;
+          padding: 12px;
+        }
+
+        .resultPlace {
+          font-size: 18px;
+          min-width: 35px;
+          margin-right: 8px;
+        }
+
+        .resultName {
+          flex: 1 1 auto;
+          min-width: 100px;
+        }
+
+        .resultStats {
+          flex-direction: row;
+          gap: 10px;
+          min-width: 100%;
+          text-align: left;
+          margin-top: 8px;
+          padding-top: 8px;
+          border-top: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .resultStats span {
+          font-size: 12px;
+        }
+      }
+
+      @media (min-width: 768px) {
+        #controls {
+          display: none;
+        }
+        #keyboardHint {
+          display: block;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="status" style="display: none">Подключение...</div>
+    <div id="playerInfo" style="display: none">
+      <div>Ваш цвет: <span id="playerColor"></span></div>
+    </div>
+
+    <div id="keyboardHint">
+      ⌨️ Управление: Пробел - поворот, Enter - выстрел
+    </div>
+
+    <div id="registration">
+      <h2>🚀 Astro Party</h2>
+      <input
+        type="text"
+        id="nameInput"
+        placeholder="Введите ваше имя"
+        maxlength="20"
+        autocomplete="off"
+      />
+      <button id="joinButton">Войти в игру</button>
+    </div>
+
+    <div id="lobby" style="display: none">
+      <h2>🚀 Лобби</h2>
+      <div id="playersList"></div>
+      <button id="startButton">Начать игру</button>
+    </div>
+
+    <div id="waiting" style="display: none">
+      <h2>Ожидание подключения...</h2>
+      <div class="spinner"></div>
+    </div>
+
+    <div id="results" style="display: none">
+      <h2>🏆 Результаты раунда</h2>
+      <div id="resultsList"></div>
+    </div>
+
+    <div id="controls" style="display: none">
+      <div class="button left" id="turnButton">
+        <span class="button-icon">↻</span>
+        <span class="button-text">ПОВОРОТ</span>
+      </div>
+      <div class="button right" id="shootButton">
+        <span class="button-icon">⚡</span>
+        <span class="button-text">ВЫСТРЕЛ</span>
+      </div>
+    </div>
+
+    <script>
+      const statusEl = document.getElementById("status");
+      const playerInfoEl = document.getElementById("playerInfo");
+      const playerColorEl = document.getElementById("playerColor");
+      const waitingEl = document.getElementById("waiting");
+      const controlsEl = document.getElementById("controls");
+      const registrationEl = document.getElementById("registration");
+      const nameInputEl = document.getElementById("nameInput");
+      const joinButtonEl = document.getElementById("joinButton");
+      const turnButton = document.getElementById("turnButton");
+      const shootButton = document.getElementById("shootButton");
+      const keyboardHintEl = document.getElementById("keyboardHint");
+      const lobbyEl = document.getElementById("lobby");
+      const playersListEl = document.getElementById("playersList");
+      const startButtonEl = document.getElementById("startButton");
+      const resultsEl = document.getElementById("results");
+      const resultsListEl = document.getElementById("resultsList");
+
+      let playerId = null;
+      let playerColor = null;
+      let playerName = null;
+      let playerUuid = null;
+      let ws = null;
+      let isTurning = false;
+      let isGameActive = false;
+      let isInputFocused = false;
+      let gameState = {
+        state: "lobby",
+        hostId: null,
+        players: [],
+        results: [],
+      };
+
+      function updateGameState() {
+        if (gameState.state === "lobby") {
+          updateLobby();
+        } else if (gameState.state === "playing") {
+          startPlaying();
+        } else if (gameState.state === "finished") {
+          showResults();
+        }
+      }
+
+      function updateLobby() {
+        lobbyEl.style.display = "flex";
+        controlsEl.style.display = "none";
+        resultsEl.style.display = "none";
+        keyboardHintEl.style.display = "none";
+        isGameActive = false;
+
+        // Update players list
+        playersListEl.innerHTML = "";
+        const connectedPlayers = (gameState.players || []).filter(
+          (p) => p.connected
+        );
+        connectedPlayers.forEach((player) => {
+          const item = document.createElement("div");
+          item.className = "playerItem";
+          item.innerHTML = `
+            <div class="playerColor" style="background: ${player.color}"></div>
+            <span>${player.name}</span>
+          `;
+          playersListEl.appendChild(item);
+        });
+
+        // Show start button only for host
+        console.log("Checking start button:", {
+          playerId: playerId,
+          hostId: gameState.hostId,
+          connectedPlayers: connectedPlayers.length,
+          isHost: playerId === gameState.hostId,
+          hasEnoughPlayers: connectedPlayers.length >= 2,
+        });
+
+        if (
+          playerId &&
+          gameState.hostId &&
+          playerId === gameState.hostId &&
+          connectedPlayers.length >= 2
+        ) {
+          startButtonEl.style.display = "block";
+          console.log("Start button shown");
+        } else {
+          startButtonEl.style.display = "none";
+          if (!playerId) console.log("playerId is not set");
+          if (!gameState.hostId) console.log("hostId is not set");
+          if (connectedPlayers.length < 2)
+            console.log("Not enough players:", connectedPlayers.length);
+        }
+      }
+
+      function startPlaying() {
+        lobbyEl.style.display = "none";
+        resultsEl.style.display = "none";
+        controlsEl.style.display = "flex";
+        keyboardHintEl.style.display = "block";
+        isGameActive = true;
+        statusEl.textContent = `Игра началась, ${playerName}!`;
+      }
+
+      function showResults() {
+        lobbyEl.style.display = "none";
+        controlsEl.style.display = "none";
+        keyboardHintEl.style.display = "none";
+        resultsEl.style.display = "flex";
+        isGameActive = false;
+
+        // Update results list
+        resultsListEl.innerHTML = "";
+        if (gameState.results && gameState.results.length > 0) {
+          gameState.results.forEach((result, index) => {
+            const isWinner = index === 0 && result.alive;
+            const item = document.createElement("div");
+            item.className = `resultItem ${isWinner ? "winner" : ""}`;
+            item.innerHTML = `
+              <div class="resultPlace">#${index + 1}</div>
+              <div class="resultName">
+                <div class="playerColor" style="background: ${
+                  result.color
+                }"></div>
+                <span>${result.name}</span>
+              </div>
+              <div class="resultStats">
+                <span>Убийства: ${result.kills}</span>
+                <span>Смерти: ${result.deaths}</span>
+              </div>
+            `;
+            resultsListEl.appendChild(item);
+          });
+        }
+      }
+
+      // Get or create UUID from localStorage
+      function getOrCreateUuid() {
+        let uuid = localStorage.getItem("astroPartyUuid");
+        if (!uuid) {
+          // Generate simple UUID
+          uuid = "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(
+            /[xy]/g,
+            function (c) {
+              const r = (Math.random() * 16) | 0;
+              const v = c === "x" ? r : (r & 0x3) | 0x8;
+              return v.toString(16);
+            }
+          );
+          localStorage.setItem("astroPartyUuid", uuid);
+        }
+        return uuid;
+      }
+
+      // Load saved name from localStorage
+      function loadSavedName() {
+        const savedName = localStorage.getItem("astroPartyName");
+        if (savedName) {
+          nameInputEl.value = savedName;
+        }
+      }
+
+      // Save name to localStorage
+      function saveName(name) {
+        localStorage.setItem("astroPartyName", name);
+      }
+
+      // Handle registration form
+      joinButtonEl.addEventListener("click", () => {
+        const name = nameInputEl.value.trim();
+        if (name.length < 2) {
+          alert("Имя должно содержать минимум 2 символа");
+          return;
+        }
+        if (name.length > 20) {
+          alert("Имя не должно превышать 20 символов");
+          return;
+        }
+        playerName = name;
+        // Ensure UUID is loaded before connecting
+        if (!playerUuid) {
+          playerUuid = getOrCreateUuid();
+        }
+        console.log("Joining game with UUID:", playerUuid, "Name:", playerName);
+        registrationEl.style.display = "none";
+        statusEl.style.display = "block";
+        connect();
+      });
+
+      nameInputEl.addEventListener("keypress", (e) => {
+        if (e.key === "Enter" && !isGameActive) {
+          e.preventDefault();
+          joinButtonEl.click();
+        }
+      });
+
+      // Track input focus for keyboard controls
+      nameInputEl.addEventListener("focus", () => {
+        isInputFocused = true;
+      });
+
+      nameInputEl.addEventListener("blur", () => {
+        isInputFocused = false;
+      });
+
+      function connect() {
+        const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+        ws = new WebSocket(`${protocol}//${window.location.host}/control`);
+
+        ws.onopen = () => {
+          // Ensure UUID is loaded
+          if (!playerUuid) {
+            playerUuid = getOrCreateUuid();
+          }
+
+          // Send player name and UUID after connection
+          console.log(
+            "Sending registration with UUID:",
+            playerUuid,
+            "Name:",
+            playerName
+          );
+          ws.send(
+            JSON.stringify({
+              type: "register",
+              name: playerName,
+              uuid: playerUuid,
+            })
+          );
+          statusEl.textContent = "Подключение...";
+          statusEl.style.color = "#fff";
+          waitingEl.style.display = "block";
+        };
+
+        ws.onmessage = (event) => {
+          const message = JSON.parse(event.data);
+
+          if (message.type === "connected") {
+            playerId = message.playerId;
+            playerColor = message.color;
+            if (message.uuid) {
+              playerUuid = message.uuid;
+              localStorage.setItem("astroPartyUuid", playerUuid);
+            }
+            // Use server's name (updated name if renamed during reconnection)
+            if (message.name) {
+              const previousName = playerName;
+              playerName = message.name;
+              // Update input field to show the actual name from server
+              nameInputEl.value = playerName;
+              // Save the actual name to localStorage
+              saveName(playerName);
+
+              // Show message if name was changed
+              if (previousName && previousName !== playerName) {
+                statusEl.textContent = `Переименован в ${playerName}!`;
+              }
+            } else {
+              // Save the name we entered
+              saveName(playerName);
+            }
+            playerColorEl.textContent = playerColor;
+            playerColorEl.style.color = playerColor;
+            playerInfoEl.style.display = "block";
+            waitingEl.style.display = "none";
+            registrationEl.style.display = "none";
+            // Wait for gameState message to update UI
+          } else if (message.type === "gameState") {
+            gameState = message.data;
+            console.log("Received gameState:", gameState);
+            updateGameState();
+          } else if (message.type === "error") {
+            statusEl.textContent = message.message;
+            statusEl.style.color = "#f00";
+            registrationEl.style.display = "flex";
+            waitingEl.style.display = "none";
+          }
+        };
+
+        ws.onerror = () => {
+          statusEl.textContent = "Ошибка подключения";
+          statusEl.style.color = "#f00";
+          registrationEl.style.display = "flex";
+          waitingEl.style.display = "none";
+        };
+
+        ws.onclose = () => {
+          statusEl.textContent = "Отключено";
+          statusEl.style.color = "#f00";
+          waitingEl.style.display = "block";
+          controlsEl.style.display = "none";
+          playerInfoEl.style.display = "none";
+          keyboardHintEl.style.display = "none";
+          lobbyEl.style.display = "none";
+          resultsEl.style.display = "none";
+          isGameActive = false;
+
+          // Don't auto-reconnect, show registration again
+          setTimeout(() => {
+            registrationEl.style.display = "flex";
+            waitingEl.style.display = "none";
+          }, 2000);
+        };
+      }
+
+      function sendTurnStart() {
+        if (ws && ws.readyState === WebSocket.OPEN && isGameActive) {
+          ws.send(JSON.stringify({ type: "turnStart" }));
+        }
+      }
+
+      function sendTurnStop() {
+        if (ws && ws.readyState === WebSocket.OPEN && isGameActive) {
+          ws.send(JSON.stringify({ type: "turnStop" }));
+        }
+      }
+
+      function sendShoot() {
+        if (ws && ws.readyState === WebSocket.OPEN && isGameActive) {
+          ws.send(JSON.stringify({ type: "shoot" }));
+        }
+      }
+
+      // Keyboard controls
+      document.addEventListener("keydown", (e) => {
+        // Don't handle keys if input is focused (except Enter for registration)
+        if (isInputFocused && e.key !== "Enter") {
+          return;
+        }
+
+        // Prevent default for game controls
+        if (e.key === " " || e.key === "Enter") {
+          e.preventDefault();
+        }
+
+        if (e.key === " " && isGameActive) {
+          // Space for turn
+          if (!isTurning) {
+            isTurning = true;
+            sendTurnStart();
+          }
+        } else if (e.key === "Enter" && isGameActive) {
+          // Enter for shoot
+          sendShoot();
+        }
+      });
+
+      document.addEventListener("keyup", (e) => {
+        if (e.key === " " && isTurning) {
+          isTurning = false;
+          sendTurnStop();
+        }
+      });
+
+      // Turn button handlers (for mobile/touch)
+      turnButton.addEventListener("touchstart", (e) => {
+        e.preventDefault();
+        if (!isTurning) {
+          isTurning = true;
+          sendTurnStart();
+        }
+      });
+
+      turnButton.addEventListener("touchend", (e) => {
+        e.preventDefault();
+        if (isTurning) {
+          isTurning = false;
+          sendTurnStop();
+        }
+      });
+
+      turnButton.addEventListener("mousedown", () => {
+        if (!isTurning) {
+          isTurning = true;
+          sendTurnStart();
+        }
+      });
+
+      turnButton.addEventListener("mouseup", () => {
+        if (isTurning) {
+          isTurning = false;
+          sendTurnStop();
+        }
+      });
+
+      turnButton.addEventListener("mouseleave", () => {
+        if (isTurning) {
+          isTurning = false;
+          sendTurnStop();
+        }
+      });
+
+      // Shoot button handlers (for mobile/touch)
+      shootButton.addEventListener("touchstart", (e) => {
+        e.preventDefault();
+        sendShoot();
+      });
+
+      shootButton.addEventListener("click", (e) => {
+        e.preventDefault();
+        sendShoot();
+      });
+
+      // Prevent context menu on long press
+      document.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+      });
+
+      // Handle page close/unload - disconnect player
+      window.addEventListener("beforeunload", () => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          // Try to send disconnect message
+          try {
+            ws.send(JSON.stringify({ type: "disconnect" }));
+          } catch (e) {
+            // Ignore errors
+          }
+          ws.close();
+        }
+      });
+
+      // Handle visibility change (tab switch, minimize)
+      document.addEventListener("visibilitychange", () => {
+        if (document.hidden && ws && ws.readyState === WebSocket.OPEN) {
+          // Optionally disconnect when tab is hidden
+          // Uncomment if you want to disconnect on tab switch:
+          // ws.close();
+        }
+      });
+
+      function updateGameState() {
+        if (gameState.state === "lobby") {
+          updateLobby();
+        } else if (gameState.state === "playing") {
+          startPlaying();
+        } else if (gameState.state === "finished") {
+          showResults();
+        }
+      }
+
+      function updateLobby() {
+        lobbyEl.style.display = "flex";
+        controlsEl.style.display = "none";
+        resultsEl.style.display = "none";
+        keyboardHintEl.style.display = "none";
+        isGameActive = false;
+
+        // Update players list
+        playersListEl.innerHTML = "";
+        const connectedPlayers = (gameState.players || []).filter(
+          (p) => p.connected
+        );
+        connectedPlayers.forEach((player) => {
+          const item = document.createElement("div");
+          item.className = "playerItem";
+          item.innerHTML = `
+            <div class="playerColor" style="background: ${player.color}"></div>
+            <span>${player.name}</span>
+          `;
+          playersListEl.appendChild(item);
+        });
+
+        // Show start button only for host
+        console.log("Checking start button:", {
+          playerId: playerId,
+          hostId: gameState.hostId,
+          connectedPlayers: connectedPlayers.length,
+          isHost: playerId === gameState.hostId,
+          hasEnoughPlayers: connectedPlayers.length >= 2,
+        });
+
+        if (
+          playerId &&
+          gameState.hostId &&
+          playerId === gameState.hostId &&
+          connectedPlayers.length >= 2
+        ) {
+          startButtonEl.style.display = "block";
+          console.log("Start button shown");
+        } else {
+          startButtonEl.style.display = "none";
+          if (!playerId) console.log("playerId is not set");
+          if (!gameState.hostId) console.log("hostId is not set");
+          if (connectedPlayers.length < 2)
+            console.log("Not enough players:", connectedPlayers.length);
+        }
+      }
+
+      function startPlaying() {
+        lobbyEl.style.display = "none";
+        resultsEl.style.display = "none";
+        controlsEl.style.display = "flex";
+        keyboardHintEl.style.display = "block";
+        isGameActive = true;
+        statusEl.textContent = `Игра началась, ${playerName}!`;
+      }
+
+      function showResults() {
+        lobbyEl.style.display = "none";
+        controlsEl.style.display = "none";
+        keyboardHintEl.style.display = "none";
+        resultsEl.style.display = "flex";
+        isGameActive = false;
+
+        // Update results list
+        resultsListEl.innerHTML = "";
+        if (gameState.results && gameState.results.length > 0) {
+          gameState.results.forEach((result, index) => {
+            const isWinner = index === 0 && result.alive;
+            const item = document.createElement("div");
+            item.className = `resultItem ${isWinner ? "winner" : ""}`;
+            item.innerHTML = `
+              <div class="resultPlace">#${index + 1}</div>
+              <div class="resultName">
+                <div class="playerColor" style="background: ${
+                  result.color
+                }"></div>
+                <span>${result.name}</span>
+              </div>
+              <div class="resultStats">
+                <span>Убийства: ${result.kills}</span>
+                <span>Смерти: ${result.deaths}</span>
+              </div>
+            `;
+            resultsListEl.appendChild(item);
+          });
+        }
+      }
+
+      startButtonEl.addEventListener("click", () => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "startGame" }));
+        }
+      });
+
+      // Load saved name and UUID, then focus on name input
+      loadSavedName();
+      playerUuid = getOrCreateUuid();
+      console.log("Loaded UUID from localStorage:", playerUuid);
+
+      if (nameInputEl.value) {
+        playerName = nameInputEl.value;
+      }
+      nameInputEl.focus();
+    </script>
+  </body>
+</html>

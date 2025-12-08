@@ -1,0 +1,24 @@
+export declare const MAX_PLAYERS = 10;
+export declare const GAME_WIDTH = 1920;
+export declare const GAME_HEIGHT = 1080;
+export declare const ACCELERATION = 0.15;
+export declare const MAX_SPEED = 5;
+export declare const FRICTION = 0.98;
+export declare const BULLET_SPEED = 8;
+export declare const TURN_SPEED = 0.03;
+export declare const TURN_SPEED_MAX = 0.15;
+export declare const TURN_ACCELERATION_TIME = 3000;
+export declare const SHIP_SIZE = 30;
+export declare const SHIP_MAX_RADIUS: number;
+export declare const COLLISION_DISTANCE: number;
+export declare const COLLISION_FORCE = 0.8;
+export declare const RESTITUTION = 0.6;
+export declare const SHIP_MASS = 1;
+export declare const PLAYER_COLORS: string[];
+export declare const GAME_FPS = 60;
+export declare const ROUND_END_DELAY = 10000;
+export declare const LOBBY_DELAY = 3000;
+export declare const DOUBLE_TAP_TIME = 300;
+export declare const DRIFT_ANGLE: number;
+export declare const DRIFT_BOOST = 8;
+//# sourceMappingURL=game-constants.d.ts.map
