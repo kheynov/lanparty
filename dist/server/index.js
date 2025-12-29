@@ -9,18 +9,22 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const app = express();
 const server = http.createServer(app);
-// Serve static files from dist directory
+// Always read HTML files from src/client (source files, no need for dist/)
+// __dirname is dist/server, so we go: dist/server -> dist -> project root -> src/client
+const projectRoot = path.resolve(__dirname, "..", "..");
+const clientPath = path.join(projectRoot, "src", "client");
+// Serve static files from dist directory (for compiled JS/CSS if any)
 app.use(express.static(path.join(__dirname, "..")));
-// Serve client HTML files
+// Serve client HTML files directly from source (no need for dist/)
 app.get("/control.html", (_req, res) => {
-    res.sendFile(path.join(__dirname, "..", "client", "control.html"));
+    res.sendFile(path.join(clientPath, "control.html"));
 });
 app.get("/display.html", (_req, res) => {
-    res.sendFile(path.join(__dirname, "..", "client", "display.html"));
+    res.sendFile(path.join(clientPath, "display.html"));
 });
 // Also serve display.html for root path
 app.get("/", (_req, res) => {
-    res.sendFile(path.join(__dirname, "..", "client", "display.html"));
+    res.sendFile(path.join(clientPath, "display.html"));
 });
 // WebSocket server
 const wss = new WebSocketServer({ server });

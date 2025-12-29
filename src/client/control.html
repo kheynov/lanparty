@@ -468,6 +468,9 @@
     <div id="status" style="display: none">Подключение...</div>
     <div id="playerInfo" style="display: none">
       <div>Ваш цвет: <span id="playerColor"></span></div>
+      <div id="ammoInfo" style="margin-top: 8px; font-size: 12px">
+        Заряды: <span id="ammoCount">-</span>/<span id="ammoMax">-</span>
+      </div>
     </div>
 
     <div id="keyboardHint">
@@ -517,7 +520,26 @@
       const statusEl = document.getElementById("status");
       const playerInfoEl = document.getElementById("playerInfo");
       const playerColorEl = document.getElementById("playerColor");
+      const ammoCountEl = document.getElementById("ammoCount");
+      const ammoMaxEl = document.getElementById("ammoMax");
       const waitingEl = document.getElementById("waiting");
+
+      // Функция для преобразования цветового кода в название цвета
+      function getColorName(colorCode) {
+        const colorMap = {
+          "#FF0000": "Красный",
+          "#FF8800": "Оранжевый",
+          "#FFDD00": "Желтый",
+          "#88FF00": "Лайм",
+          "#00FF00": "Зеленый",
+          "#00FF88": "Аквамарин",
+          "#00FFFF": "Циан",
+          "#0088FF": "Синий",
+          "#8800FF": "Фиолетовый",
+          "#FF00FF": "Пурпурный",
+        };
+        return colorMap[colorCode] || colorCode;
+      }
       const controlsEl = document.getElementById("controls");
       const registrationEl = document.getElementById("registration");
       const nameInputEl = document.getElementById("nameInput");
@@ -604,6 +626,67 @@
         }
       }
 
+      function updateAmmoDisplay() {
+        console.log("updateAmmoDisplay called", {
+          gameState: !!gameState,
+          playerId,
+          ammoCountEl: !!ammoCountEl,
+          ammoMaxEl: !!ammoMaxEl,
+        });
+
+        if (!gameState || !playerId) {
+          console.log("updateAmmoDisplay: missing gameState or playerId");
+          return;
+        }
+
+        const player = gameState.players?.find((p) => p.id === playerId);
+        console.log("updateAmmoDisplay: player found", {
+          player: !!player,
+          playerId,
+          playersCount: gameState.players?.length,
+        });
+
+        if (!player) {
+          console.log("updateAmmoDisplay: player not found in players list");
+          return;
+        }
+
+        if (!ammoCountEl || !ammoMaxEl) {
+          console.log("updateAmmoDisplay: ammo elements not found", {
+            ammoCountEl: !!ammoCountEl,
+            ammoMaxEl: !!ammoMaxEl,
+          });
+          return;
+        }
+
+        const now = Date.now();
+        const ammoCount =
+          player.ammoCount !== undefined
+            ? player.ammoCount
+            : (player.ammoReadyTime || []).filter(
+                (readyTime) => readyTime <= now
+              ).length;
+        const ammoMax = player.ammoReadyTime?.length || 3;
+
+        console.log("updateAmmoDisplay: updating display", {
+          ammoCount,
+          ammoMax,
+          ammoCountFromServer: player.ammoCount,
+          ammoReadyTime: player.ammoReadyTime,
+          ammoReadyTimeLength: player.ammoReadyTime?.length,
+        });
+
+        ammoCountEl.textContent = ammoCount;
+        ammoMaxEl.textContent = ammoMax;
+
+        // Визуальная обратная связь: если зарядов нет, делаем текст красным
+        if (ammoCount === 0) {
+          ammoCountEl.style.color = "#ff4444";
+        } else {
+          ammoCountEl.style.color = "#fff";
+        }
+      }
+
       function startPlaying() {
         lobbyEl.style.display = "none";
         resultsEl.style.display = "none";
@@ -611,6 +694,7 @@
         keyboardHintEl.style.display = "block";
         isGameActive = true;
         statusEl.textContent = `Игра началась, ${playerName}!`;
+        updateAmmoDisplay();
       }
 
       function showResults() {
@@ -770,7 +854,7 @@
               // Save the name we entered
               saveName(playerName);
             }
-            playerColorEl.textContent = playerColor;
+            playerColorEl.textContent = getColorName(playerColor);
             playerColorEl.style.color = playerColor;
             playerInfoEl.style.display = "block";
             waitingEl.style.display = "none";
@@ -780,6 +864,7 @@
             gameState = message.data;
             console.log("Received gameState:", gameState);
             updateGameState();
+            updateAmmoDisplay();
           } else if (message.type === "error") {
             statusEl.textContent = message.message;
             statusEl.style.color = "#f00";
@@ -939,6 +1024,67 @@
         }
       });
 
+      function updateAmmoDisplay() {
+        console.log("updateAmmoDisplay called", {
+          gameState: !!gameState,
+          playerId,
+          ammoCountEl: !!ammoCountEl,
+          ammoMaxEl: !!ammoMaxEl,
+        });
+
+        if (!gameState || !playerId) {
+          console.log("updateAmmoDisplay: missing gameState or playerId");
+          return;
+        }
+
+        const player = gameState.players?.find((p) => p.id === playerId);
+        console.log("updateAmmoDisplay: player found", {
+          player: !!player,
+          playerId,
+          playersCount: gameState.players?.length,
+        });
+
+        if (!player) {
+          console.log("updateAmmoDisplay: player not found in players list");
+          return;
+        }
+
+        if (!ammoCountEl || !ammoMaxEl) {
+          console.log("updateAmmoDisplay: ammo elements not found", {
+            ammoCountEl: !!ammoCountEl,
+            ammoMaxEl: !!ammoMaxEl,
+          });
+          return;
+        }
+
+        const now = Date.now();
+        const ammoCount =
+          player.ammoCount !== undefined
+            ? player.ammoCount
+            : (player.ammoReadyTime || []).filter(
+                (readyTime) => readyTime <= now
+              ).length;
+        const ammoMax = player.ammoReadyTime?.length || 3;
+
+        console.log("updateAmmoDisplay: updating display", {
+          ammoCount,
+          ammoMax,
+          ammoCountFromServer: player.ammoCount,
+          ammoReadyTime: player.ammoReadyTime,
+          ammoReadyTimeLength: player.ammoReadyTime?.length,
+        });
+
+        ammoCountEl.textContent = ammoCount;
+        ammoMaxEl.textContent = ammoMax;
+
+        // Визуальная обратная связь: если зарядов нет, делаем текст красным
+        if (ammoCount === 0) {
+          ammoCountEl.style.color = "#ff4444";
+        } else {
+          ammoCountEl.style.color = "#fff";
+        }
+      }
+
       function updateGameState() {
         if (gameState.state === "lobby") {
           updateLobby();
@@ -997,6 +1143,67 @@
         }
       }
 
+      function updateAmmoDisplay() {
+        console.log("updateAmmoDisplay called", {
+          gameState: !!gameState,
+          playerId,
+          ammoCountEl: !!ammoCountEl,
+          ammoMaxEl: !!ammoMaxEl,
+        });
+
+        if (!gameState || !playerId) {
+          console.log("updateAmmoDisplay: missing gameState or playerId");
+          return;
+        }
+
+        const player = gameState.players?.find((p) => p.id === playerId);
+        console.log("updateAmmoDisplay: player found", {
+          player: !!player,
+          playerId,
+          playersCount: gameState.players?.length,
+        });
+
+        if (!player) {
+          console.log("updateAmmoDisplay: player not found in players list");
+          return;
+        }
+
+        if (!ammoCountEl || !ammoMaxEl) {
+          console.log("updateAmmoDisplay: ammo elements not found", {
+            ammoCountEl: !!ammoCountEl,
+            ammoMaxEl: !!ammoMaxEl,
+          });
+          return;
+        }
+
+        const now = Date.now();
+        const ammoCount =
+          player.ammoCount !== undefined
+            ? player.ammoCount
+            : (player.ammoReadyTime || []).filter(
+                (readyTime) => readyTime <= now
+              ).length;
+        const ammoMax = player.ammoReadyTime?.length || 3;
+
+        console.log("updateAmmoDisplay: updating display", {
+          ammoCount,
+          ammoMax,
+          ammoCountFromServer: player.ammoCount,
+          ammoReadyTime: player.ammoReadyTime,
+          ammoReadyTimeLength: player.ammoReadyTime?.length,
+        });
+
+        ammoCountEl.textContent = ammoCount;
+        ammoMaxEl.textContent = ammoMax;
+
+        // Визуальная обратная связь: если зарядов нет, делаем текст красным
+        if (ammoCount === 0) {
+          ammoCountEl.style.color = "#ff4444";
+        } else {
+          ammoCountEl.style.color = "#fff";
+        }
+      }
+
       function startPlaying() {
         lobbyEl.style.display = "none";
         resultsEl.style.display = "none";
@@ -1004,6 +1211,7 @@
         keyboardHintEl.style.display = "block";
         isGameActive = true;
         statusEl.textContent = `Игра началась, ${playerName}!`;
+        updateAmmoDisplay();
       }
 
       function showResults() {

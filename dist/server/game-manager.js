@@ -1,6 +1,6 @@
 import { WebSocket } from "ws";
 import { GameState, } from "../shared/game-types.js";
-import { MAX_PLAYERS, GAME_WIDTH, GAME_HEIGHT, ACCELERATION, MAX_SPEED, FRICTION, BULLET_SPEED, TURN_SPEED, TURN_SPEED_MAX, TURN_ACCELERATION_TIME, SHIP_SIZE, SHIP_MAX_RADIUS, COLLISION_DISTANCE, COLLISION_FORCE, RESTITUTION, PLAYER_COLORS, GAME_FPS, ROUND_END_DELAY, LOBBY_DELAY, DOUBLE_TAP_TIME, DRIFT_ANGLE, DRIFT_BOOST, } from "./game-constants.js";
+import { MAX_PLAYERS, GAME_WIDTH, GAME_HEIGHT, ACCELERATION, MAX_SPEED, FRICTION, BULLET_SPEED, TURN_SPEED, TURN_SPEED_MAX, TURN_ACCELERATION_TIME, SHIP_SIZE, SHIP_MAX_RADIUS, COLLISION_DISTANCE, COLLISION_FORCE, RESTITUTION, PLAYER_COLORS, GAME_FPS, ROUND_END_DELAY, DOUBLE_TAP_TIME, DRIFT_ANGLE, DRIFT_BOOST, AMMO_CLIP_SIZE, AMMO_RELOAD_TIME, } from "./game-constants.js";
 export class GameManager {
     constructor() {
         this.players = new Map();
@@ -14,6 +14,8 @@ export class GameManager {
         this.lastTurnTime = new Map(); // Время последнего поворота для каждого игрока
         this.turningPlayers = new Set(); // Игроки, которые сейчас поворачиваются
         this.turnStartTime = new Map(); // Время начала поворота для каждого игрока
+        this.nextRoundTime = null; // Время начала следующего раунда
+        this.killLog = []; // Килл-лог текущего раунда
     }
     addClient(ws) {
         this.clients.add(ws);
@@ -38,6 +40,13 @@ export class GameManager {
         const usedColors = Array.from(this.players.values())
             .map((p) => p.color)
             .filter((c) => c);
+        const now = Date.now();
+        // Инициализируем заряды: первый готов сразу, остальные будут готовы через AMMO_RELOAD_TIME
+        const ammoReadyTime = [];
+        ammoReadyTime[0] = now; // Первый заряд готов сразу
+        for (let i = 1; i < AMMO_CLIP_SIZE; i++) {
+            ammoReadyTime[i] = now + i * AMMO_RELOAD_TIME; // Остальные заряжаются последовательно
+        }
         const player = {
             id: playerId,
             uuid: uuid,
@@ -52,6 +61,7 @@ export class GameManager {
             connected: true,
             kills: 0,
             deaths: 0,
+            ammoReadyTime: ammoReadyTime,
         };
         if (!this.hostId) {
             this.hostId = playerId;
@@ -165,6 +175,20 @@ export class GameManager {
         const player = this.players.get(playerId);
         if (!player || !player.alive || !player.connected)
             return;
+        const now = Date.now();
+        // Находим первый готовый заряд
+        let readyAmmoIndex = -1;
+        for (let i = 0; i < player.ammoReadyTime.length; i++) {
+            if (player.ammoReadyTime[i] <= now) {
+                readyAmmoIndex = i;
+                break;
+            }
+        }
+        // Если нет готовых зарядов, не стреляем
+        if (readyAmmoIndex === -1)
+            return;
+        // Используем заряд - устанавливаем время следующей перезарядки
+        player.ammoReadyTime[readyAmmoIndex] = now + AMMO_RELOAD_TIME;
         const bullet = {
             x: player.x + Math.cos(player.angle) * (SHIP_SIZE + 5),
             y: player.y + Math.sin(player.angle) * (SHIP_SIZE + 5),
@@ -173,29 +197,114 @@ export class GameManager {
         };
         this.bullets.push(bullet);
     }
+    /**
+     * Размещает игроков по периметру карты, направленными в центр
+     */
+    positionPlayersOnPerimeter() {
+        const connectedPlayers = Array.from(this.players.values()).filter((p) => p.connected);
+        const playerCount = connectedPlayers.length;
+        if (playerCount === 0)
+            return;
+        const centerX = GAME_WIDTH / 2;
+        const centerY = GAME_HEIGHT / 2;
+        const margin = 50; // Отступ от края карты
+        connectedPlayers.forEach((player, index) => {
+            // Вычисляем угол для равномерного распределения по периметру
+            // Начинаем с угла -π/2 (верхняя точка) и распределяем по часовой стрелке
+            const angle = (2 * Math.PI * index) / playerCount - Math.PI / 2;
+            // Размещаем игрока на границе прямоугольника
+            // Находим пересечение луча из центра с границей прямоугольника
+            const halfWidth = GAME_WIDTH / 2 - margin;
+            const halfHeight = GAME_HEIGHT / 2 - margin;
+            // Параметрическое уравнение прямой: x = centerX + t*cos(angle), y = centerY + t*sin(angle)
+            // Находим t, при котором точка попадает на границу прямоугольника
+            let t = Infinity;
+            let x = centerX + halfWidth * Math.cos(angle); // Fallback на эллипс
+            let y = centerY + halfHeight * Math.sin(angle); // Fallback на эллипс
+            // Проверяем пересечение с каждой стороной прямоугольника
+            // Правая сторона: x = GAME_WIDTH - margin
+            if (Math.cos(angle) > 0) {
+                const tRight = (GAME_WIDTH - margin - centerX) / Math.cos(angle);
+                const yRight = centerY + tRight * Math.sin(angle);
+                if (yRight >= margin && yRight <= GAME_HEIGHT - margin && tRight < t) {
+                    t = tRight;
+                    x = GAME_WIDTH - margin;
+                    y = yRight;
+                }
+            }
+            // Левая сторона: x = margin
+            if (Math.cos(angle) < 0) {
+                const tLeft = (margin - centerX) / Math.cos(angle);
+                const yLeft = centerY + tLeft * Math.sin(angle);
+                if (yLeft >= margin && yLeft <= GAME_HEIGHT - margin && tLeft < t) {
+                    t = tLeft;
+                    x = margin;
+                    y = yLeft;
+                }
+            }
+            // Нижняя сторона: y = GAME_HEIGHT - margin
+            if (Math.sin(angle) > 0) {
+                const tBottom = (GAME_HEIGHT - margin - centerY) / Math.sin(angle);
+                const xBottom = centerX + tBottom * Math.cos(angle);
+                if (xBottom >= margin &&
+                    xBottom <= GAME_WIDTH - margin &&
+                    tBottom < t) {
+                    t = tBottom;
+                    x = xBottom;
+                    y = GAME_HEIGHT - margin;
+                }
+            }
+            // Верхняя сторона: y = margin
+            if (Math.sin(angle) < 0) {
+                const tTop = (margin - centerY) / Math.sin(angle);
+                const xTop = centerX + tTop * Math.cos(angle);
+                if (xTop >= margin && xTop <= GAME_WIDTH - margin && tTop < t) {
+                    t = tTop;
+                    x = xTop;
+                    y = margin;
+                }
+            }
+            // Если не нашли пересечение (не должно произойти), используем эллипс как fallback
+            if (t === Infinity || x === undefined || y === undefined) {
+                x = centerX + halfWidth * Math.cos(angle);
+                y = centerY + halfHeight * Math.sin(angle);
+            }
+            player.x = x;
+            player.y = y;
+            // Направляем игрока в центр карты
+            player.angle = Math.atan2(centerY - y, centerX - x);
+        });
+    }
     startGame() {
         if (this.state !== GameState.LOBBY)
             return;
         if (this.players.size < 2)
             return;
         this.bullets = [];
+        this.killLog = []; // Очищаем килл-лог при старте нового раунда
         this.lastTurnTime.clear(); // Очищаем время последних поворотов при старте игры
         this.turningPlayers.clear(); // Очищаем список поворачивающихся игроков
         this.turnStartTime.clear(); // Очищаем время начала поворотов
+        const now = Date.now();
         this.players.forEach((player) => {
             if (player.connected) {
                 player.alive = true;
-                player.x = Math.random() * GAME_WIDTH;
-                player.y = Math.random() * GAME_HEIGHT;
-                player.angle = Math.random() * Math.PI * 2;
                 player.velocityX = 0;
                 player.velocityY = 0;
                 if (!player.kills)
                     player.kills = 0;
                 if (!player.deaths)
                     player.deaths = 0;
+                // Инициализируем заряды: первый готов сразу, остальные будут готовы через AMMO_RELOAD_TIME
+                player.ammoReadyTime = [];
+                player.ammoReadyTime[0] = now; // Первый заряд готов сразу
+                for (let i = 1; i < AMMO_CLIP_SIZE; i++) {
+                    player.ammoReadyTime[i] = now + i * AMMO_RELOAD_TIME; // Остальные заряжаются последовательно
+                }
             }
         });
+        // Размещаем игроков по периметру карты
+        this.positionPlayersOnPerimeter();
         this.startGameLoop();
     }
     startGameLoop() {
@@ -274,6 +383,17 @@ export class GameManager {
                     const killer = this.players.get(bullet.ownerId);
                     if (killer) {
                         killer.kills++;
+                        // Добавляем запись в килл-лог
+                        const killEntry = {
+                            killerId: killer.id,
+                            killerName: killer.name,
+                            killerColor: killer.color,
+                            victimId: player.id,
+                            victimName: player.name,
+                            victimColor: player.color,
+                            timestamp: Date.now(),
+                        };
+                        this.killLog.push(killEntry);
                     }
                     hit = true;
                 }
@@ -380,21 +500,22 @@ export class GameManager {
             return a.deaths - b.deaths;
         });
         this.roundResults = results;
+        // Вычисляем время перехода в лобби (без автоматического запуска следующего раунда)
+        const now = Date.now();
+        this.nextRoundTime = now + ROUND_END_DELAY;
         this.broadcastGameState();
+        // Переход в лобби после показа результатов (без автоматического запуска следующего раунда)
         setTimeout(() => {
             this.resetToLobby();
-            setTimeout(() => {
-                const connectedPlayers = Array.from(this.players.values()).filter((p) => p.connected);
-                if (connectedPlayers.length >= 2 && this.state === GameState.LOBBY) {
-                    this.startGame();
-                }
-            }, LOBBY_DELAY);
         }, ROUND_END_DELAY);
     }
     resetToLobby() {
         this.state = GameState.LOBBY;
         this.bullets = [];
         this.roundResults = [];
+        this.nextRoundTime = null; // Сбрасываем таймер при переходе в лобби
+        // Не очищаем killLog здесь, чтобы он оставался для отображения на экране результатов
+        const now = Date.now();
         this.players.forEach((player) => {
             if (player.connected) {
                 player.alive = true;
@@ -403,23 +524,36 @@ export class GameManager {
                 player.angle = Math.random() * Math.PI * 2;
                 player.velocityX = 0;
                 player.velocityY = 0;
+                // Инициализируем заряды: первый готов сразу, остальные будут готовы через AMMO_RELOAD_TIME
+                player.ammoReadyTime = [];
+                player.ammoReadyTime[0] = now; // Первый заряд готов сразу
+                for (let i = 1; i < AMMO_CLIP_SIZE; i++) {
+                    player.ammoReadyTime[i] = now + i * AMMO_RELOAD_TIME; // Остальные заряжаются последовательно
+                }
             }
         });
         this.broadcastGameState();
     }
     getGameState() {
-        const players = Array.from(this.players.entries()).map(([id, player]) => ({
-            id,
-            name: player.name,
-            x: player.x,
-            y: player.y,
-            angle: player.angle,
-            color: player.color,
-            alive: player.alive,
-            connected: player.connected,
-            kills: player.kills,
-            deaths: player.deaths,
-        }));
+        const now = Date.now();
+        const players = Array.from(this.players.entries()).map(([id, player]) => {
+            // Подсчитываем количество готовых зарядов
+            const ammoCount = player.ammoReadyTime.filter((readyTime) => readyTime <= now).length;
+            return {
+                id,
+                name: player.name,
+                x: player.x,
+                y: player.y,
+                angle: player.angle,
+                color: player.color,
+                alive: player.alive,
+                connected: player.connected,
+                kills: player.kills,
+                deaths: player.deaths,
+                ammoReadyTime: [...player.ammoReadyTime], // Копируем массив
+                ammoCount: ammoCount,
+            };
+        });
         const bullets = this.bullets.map((bullet) => ({
             x: bullet.x,
             y: bullet.y,
@@ -431,6 +565,8 @@ export class GameManager {
             players,
             bullets,
             results: this.roundResults,
+            nextRoundTime: this.nextRoundTime || undefined,
+            killLog: [...this.killLog], // Всегда отправляем массив (может быть пустым)
         };
     }
     broadcastGameState() {

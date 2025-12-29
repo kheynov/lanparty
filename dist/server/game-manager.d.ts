@@ -12,6 +12,8 @@ export declare class GameManager {
     private lastTurnTime;
     private turningPlayers;
     private turnStartTime;
+    private nextRoundTime;
+    private killLog;
     constructor();
     addClient(ws: WebSocket): void;
     removeClient(ws: WebSocket): void;
@@ -33,6 +35,10 @@ export declare class GameManager {
     turnStop(playerId: string): void;
     private applyTurns;
     shootBullet(playerId: string): void;
+    /**
+     * Размещает игроков по периметру карты, направленными в центр
+     */
+    private positionPlayersOnPerimeter;
     startGame(): void;
     private startGameLoop;
     private stopGameLoop;

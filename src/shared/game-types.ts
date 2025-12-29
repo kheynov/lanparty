@@ -20,6 +20,7 @@ export interface Player {
   connected: boolean;
   kills: number;
   deaths: number;
+  ammoReadyTime: number[]; // Массив времени готовности каждого заряда (в мс с начала эпохи)
 }
 
 // Bullet data
@@ -46,6 +47,17 @@ export interface PlayerResult {
   color: string;
 }
 
+// Kill log entry
+export interface KillLogEntry {
+  killerId: string;
+  killerName: string;
+  killerColor: string;
+  victimId: string;
+  victimName: string;
+  victimColor: string;
+  timestamp: number; // Время убийства в миллисекундах
+}
+
 // Full game state
 export interface GameStateData {
   state: GameState;
@@ -53,6 +65,8 @@ export interface GameStateData {
   players: PlayerInfo[];
   bullets: BulletInfo[];
   results: PlayerResult[];
+  nextRoundTime?: number; // Время (timestamp) когда начнется следующий раунд
+  killLog: KillLogEntry[]; // Килл-лог текущего раунда (всегда массив, может быть пустым)
 }
 
 // Player info for client
@@ -67,6 +81,8 @@ export interface PlayerInfo {
   connected: boolean;
   kills: number;
   deaths: number;
+  ammoReadyTime: number[]; // Массив времени готовности каждого заряда (для синхронизации)
+  ammoCount: number; // Количество готовых зарядов (для удобства отображения)
 }
 
 // Bullet info for client

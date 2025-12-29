@@ -8,6 +8,10 @@ export const ACCELERATION = 0.15; // Ship acceleration
 export const MAX_SPEED = 5; // Maximum speed
 export const FRICTION = 0.98; // Friction (inertia)
 export const BULLET_SPEED = 8;
+
+// Ammo system constants
+export const AMMO_CLIP_SIZE = 3; // Размер обоймы (количество зарядов)
+export const AMMO_RELOAD_TIME = 2000; // Время перезарядки одного заряда в миллисекундах
 export const TURN_SPEED = 0.03; // Базовая скорость поворота
 export const TURN_SPEED_MAX = 0.15; // Максимальная скорость поворота
 export const TURN_ACCELERATION_TIME = 3000; // Время в мс для достижения максимальной скорости поворота

@@ -11,8 +11,8 @@
     "copy:html": "node copy-html.cjs",
     "start": "node dist/server/index.js",
     "start:no-sleep": "caffeinate -i node dist/server/index.js",
-    "dev": "npm run build && nodemon --watch src --ext ts,html --exec \"npm run build && npm start\"",
-    "dev:no-sleep": "npm run build && caffeinate -i nodemon --watch src --ext ts,html --exec \"npm run build && npm start\"",
+    "dev": "npm run build && nodemon --watch src --ext ts,html --exec \"npm run build:server && npm run copy:html && npm start\"",
+    "dev:no-sleep": "npm run build && caffeinate -i nodemon --watch src --ext ts,html --exec \"npm run build:server && npm run copy:html && npm start\"",
     "clean": "rm -rf dist"
   },
   "dependencies": {

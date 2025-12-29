@@ -17,6 +17,7 @@ export interface Player {
     connected: boolean;
     kills: number;
     deaths: number;
+    ammoReadyTime: number[];
 }
 export interface Bullet {
     x: number;
@@ -36,12 +37,23 @@ export interface PlayerResult {
     alive: boolean;
     color: string;
 }
+export interface KillLogEntry {
+    killerId: string;
+    killerName: string;
+    killerColor: string;
+    victimId: string;
+    victimName: string;
+    victimColor: string;
+    timestamp: number;
+}
 export interface GameStateData {
     state: GameState;
     hostId: string | null;
     players: PlayerInfo[];
     bullets: BulletInfo[];
     results: PlayerResult[];
+    nextRoundTime?: number;
+    killLog: KillLogEntry[];
 }
 export interface PlayerInfo {
     id: string;
@@ -54,6 +66,8 @@ export interface PlayerInfo {
     connected: boolean;
     kills: number;
     deaths: number;
+    ammoReadyTime: number[];
+    ammoCount: number;
 }
 export interface BulletInfo {
     x: number;
