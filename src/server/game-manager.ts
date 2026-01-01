@@ -45,13 +45,25 @@ export class GameManager {
   private roundResults: PlayerResult[] = [];
   private playerIdCounter = 0;
   private clients: Set<WebSocket> = new Set();
-  private lastTurnTime: Map<string, number> = new Map(); // Время последнего поворота для каждого игрока
-  private turningPlayers: Set<string> = new Set(); // Игроки, которые сейчас поворачиваются
-  private turnStartTime: Map<string, number> = new Map(); // Время начала поворота для каждого игрока
-  private nextRoundTime: number | null = null; // Время начала следующего раунда
-  private killLog: KillLogEntry[] = []; // Килл-лог текущего раунда
+  private lastTurnTime: Map<string, number> = new Map();
+  private turningPlayers: Set<string> = new Set();
+  private turnStartTime: Map<string, number> = new Map();
+  private nextRoundTime: number | null = null;
+  private killLog: KillLogEntry[] = [];
 
   constructor() {}
+
+  /**
+   * Initialize ammo for a player with first charge ready and others reloading
+   */
+  private initializeAmmo(now: number = Date.now()): number[] {
+    const ammoReadyTime: number[] = [];
+    ammoReadyTime[0] = now; // First charge ready immediately
+    for (let i = 1; i < AMMO_CLIP_SIZE; i++) {
+      ammoReadyTime[i] = now + i * AMMO_RELOAD_TIME; // Others reload sequentially
+    }
+    return ammoReadyTime;
+  }
 
   public addClient(ws: WebSocket): void {
     this.clients.add(ws);
@@ -87,14 +99,6 @@ export class GameManager {
       .map((p) => p.color)
       .filter((c) => c);
 
-    const now = Date.now();
-    // Инициализируем заряды: первый готов сразу, остальные будут готовы через AMMO_RELOAD_TIME
-    const ammoReadyTime: number[] = [];
-    ammoReadyTime[0] = now; // Первый заряд готов сразу
-    for (let i = 1; i < AMMO_CLIP_SIZE; i++) {
-      ammoReadyTime[i] = now + i * AMMO_RELOAD_TIME; // Остальные заряжаются последовательно
-    }
-
     const player: Player = {
       id: playerId,
       uuid: uuid,
@@ -109,7 +113,7 @@ export class GameManager {
       connected: true,
       kills: 0,
       deaths: 0,
-      ammoReadyTime: ammoReadyTime,
+      ammoReadyTime: this.initializeAmmo(),
     };
 
     if (!this.hostId) {
@@ -382,13 +386,7 @@ export class GameManager {
         player.velocityY = 0;
         if (!player.kills) player.kills = 0;
         if (!player.deaths) player.deaths = 0;
-
-        // Инициализируем заряды: первый готов сразу, остальные будут готовы через AMMO_RELOAD_TIME
-        player.ammoReadyTime = [];
-        player.ammoReadyTime[0] = now; // Первый заряд готов сразу
-        for (let i = 1; i < AMMO_CLIP_SIZE; i++) {
-          player.ammoReadyTime[i] = now + i * AMMO_RELOAD_TIME; // Остальные заряжаются последовательно
-        }
+        player.ammoReadyTime = this.initializeAmmo(now);
       }
     });
 
@@ -691,13 +689,7 @@ export class GameManager {
         player.angle = Math.random() * Math.PI * 2;
         player.velocityX = 0;
         player.velocityY = 0;
-
-        // Инициализируем заряды: первый готов сразу, остальные будут готовы через AMMO_RELOAD_TIME
-        player.ammoReadyTime = [];
-        player.ammoReadyTime[0] = now; // Первый заряд готов сразу
-        for (let i = 1; i < AMMO_CLIP_SIZE; i++) {
-          player.ammoReadyTime[i] = now + i * AMMO_RELOAD_TIME; // Остальные заряжаются последовательно
-        }
+        player.ammoReadyTime = this.initializeAmmo(now);
       }
     });
 
@@ -753,7 +745,12 @@ export class GameManager {
 
     this.clients.forEach((client) => {
       if (client.readyState === WebSocket.OPEN) {
-        client.send(message);
+        try {
+          client.send(message);
+        } catch (error) {
+          console.error("Error sending game state to client:", error);
+          this.clients.delete(client);
+        }
       }
     });
   }

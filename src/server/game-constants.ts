@@ -48,7 +48,6 @@ export const PLAYER_COLORS = [
 // Game timing
 export const GAME_FPS = 60;
 export const ROUND_END_DELAY = 10000; // 10 seconds
-export const LOBBY_DELAY = 3000; // 3 seconds
 
 // Drift mechanics
 export const DOUBLE_TAP_TIME = 300; // Время в мс для определения двойного нажатия

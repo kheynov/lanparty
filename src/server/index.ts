@@ -22,12 +22,8 @@ const clientPath = path.join(projectRoot, "src", "client");
 app.use(express.static(path.join(__dirname, "..")));
 
 // Serve client HTML files directly from source (no need for dist/)
-app.get("/control.html", (_req, res) => {
+app.get("/control", (_req, res) => {
   res.sendFile(path.join(clientPath, "control.html"));
-});
-
-app.get("/display.html", (_req, res) => {
-  res.sendFile(path.join(clientPath, "display.html"));
 });
 
 // Also serve display.html for root path
@@ -230,5 +226,5 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
   console.log(`Display: http://localhost:${PORT}`);
-  console.log(`Control: http://localhost:${PORT}/control.html`);
+  console.log(`Control: http://localhost:${PORT}/control`);
 });
