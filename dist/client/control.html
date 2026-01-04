@@ -491,6 +491,7 @@
 
     <div id="lobby" style="display: none">
       <h2>🚀 Лобби</h2>
+      <div id="roomCodeInLobby" style="text-align: center; margin-bottom: 15px; color: #4CAF50; font-size: 18px; font-weight: bold; letter-spacing: 2px;"></div>
       <div id="playersList"></div>
       <button id="startButton">Начать игру</button>
     </div>
@@ -544,6 +545,7 @@
       const registrationEl = document.getElementById("registration");
       const nameInputEl = document.getElementById("nameInput");
       const joinButtonEl = document.getElementById("joinButton");
+      const roomCodeInLobbyEl = document.getElementById("roomCodeInLobby");
       const turnButton = document.getElementById("turnButton");
       const shootButton = document.getElementById("shootButton");
       const keyboardHintEl = document.getElementById("keyboardHint");
@@ -561,11 +563,13 @@
       let isTurning = false;
       let isGameActive = false;
       let isInputFocused = false;
+      let currentRoomCode = null;
       let gameState = {
         state: "lobby",
         hostId: null,
         players: [],
         results: [],
+        roomCode: null,
       };
 
       function updateGameState() {
@@ -584,6 +588,14 @@
         resultsEl.style.display = "none";
         keyboardHintEl.style.display = "none";
         isGameActive = false;
+
+        // Update room code display
+        if (gameState.roomCode) {
+          roomCodeInLobbyEl.textContent = `Комната: ${gameState.roomCode}`;
+          roomCodeInLobbyEl.style.display = "block";
+        } else {
+          roomCodeInLobbyEl.style.display = "none";
+        }
 
         // Update players list
         playersListEl.innerHTML = "";
@@ -760,6 +772,8 @@
         localStorage.setItem("astroPartyName", name);
       }
 
+      // Временно отключена механика кодов подключения
+
       // Handle registration form
       joinButtonEl.addEventListener("click", () => {
         const name = nameInputEl.value.trim();
@@ -771,6 +785,10 @@
           alert("Имя не должно превышать 20 символов");
           return;
         }
+        // Временно: автоматически устанавливаем дефолтную комнату
+        if (!currentRoomCode) {
+          currentRoomCode = "DEFAULT";
+        }
         playerName = name;
         // Ensure UUID is loaded before connecting
         if (!playerUuid) {
@@ -779,8 +797,57 @@
         console.log("Joining game with UUID:", playerUuid, "Name:", playerName);
         registrationEl.style.display = "none";
         statusEl.style.display = "block";
-        connect();
+        registerPlayer();
       });
+
+      function registerPlayer() {
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+          // Пытаемся подключиться, если соединения нет
+          connect();
+          // Ждем установления соединения
+          const checkConnection = setInterval(() => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+              clearInterval(checkConnection);
+              // Повторно вызываем регистрацию после подключения
+              registerPlayer();
+            } else if (ws && ws.readyState === WebSocket.CLOSED) {
+              clearInterval(checkConnection);
+              alert("Не удалось подключиться к серверу");
+            }
+          }, 100);
+          // Таймаут на 5 секунд
+          setTimeout(() => {
+            clearInterval(checkConnection);
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+              alert("Не удалось подключиться к серверу. Проверьте подключение к интернету.");
+            }
+          }, 5000);
+          return;
+        }
+        if (!playerName) {
+          alert("Введите имя");
+          return;
+        }
+        // Временно: автоматически устанавливаем дефолтную комнату
+        if (!currentRoomCode) {
+          currentRoomCode = "DEFAULT";
+        }
+        // Ensure UUID is loaded
+        if (!playerUuid) {
+          playerUuid = getOrCreateUuid();
+        }
+        console.log("Registering player:", { name: playerName, uuid: playerUuid });
+        ws.send(
+          JSON.stringify({
+            type: "register",
+            name: playerName,
+            uuid: playerUuid,
+          })
+        );
+        statusEl.textContent = "Регистрация...";
+        statusEl.style.color = "#fff";
+        waitingEl.style.display = "block";
+      }
 
       nameInputEl.addEventListener("keypress", (e) => {
         if (e.key === "Enter" && !isGameActive) {
@@ -799,38 +866,31 @@
       });
 
       function connect() {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          return; // Already connected
+        }
         const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
         ws = new WebSocket(`${protocol}//${window.location.host}/control`);
 
         ws.onopen = () => {
-          // Ensure UUID is loaded
-          if (!playerUuid) {
-            playerUuid = getOrCreateUuid();
-          }
-
-          // Send player name and UUID after connection
-          console.log(
-            "Sending registration with UUID:",
-            playerUuid,
-            "Name:",
-            playerName
-          );
-          ws.send(
-            JSON.stringify({
-              type: "register",
-              name: playerName,
-              uuid: playerUuid,
-            })
-          );
-          statusEl.textContent = "Подключение...";
+          console.log("WebSocket connected");
+          statusEl.textContent = "Подключено";
           statusEl.style.color = "#fff";
-          waitingEl.style.display = "block";
+          // Временно: автоматически устанавливаем дефолтную комнату
+          if (!currentRoomCode) {
+            currentRoomCode = "DEFAULT";
+          }
         };
 
         ws.onmessage = (event) => {
           const message = JSON.parse(event.data);
 
-          if (message.type === "connected") {
+          if (message.type === "roomCode") {
+            currentRoomCode = message.roomCode || "DEFAULT";
+            joinButtonEl.style.display = "block";
+            nameInputEl.focus();
+            console.log("Room code received:", message.roomCode);
+          } else if (message.type === "connected") {
             playerId = message.playerId;
             playerColor = message.color;
             if (message.uuid) {
@@ -862,6 +922,9 @@
             // Wait for gameState message to update UI
           } else if (message.type === "gameState") {
             gameState = message.data;
+            if (gameState.roomCode) {
+              currentRoomCode = gameState.roomCode;
+            }
             console.log("Received gameState:", gameState);
             updateGameState();
             updateAmmoDisplay();
@@ -1024,228 +1087,6 @@
         }
       });
 
-      function updateAmmoDisplay() {
-        console.log("updateAmmoDisplay called", {
-          gameState: !!gameState,
-          playerId,
-          ammoCountEl: !!ammoCountEl,
-          ammoMaxEl: !!ammoMaxEl,
-        });
-
-        if (!gameState || !playerId) {
-          console.log("updateAmmoDisplay: missing gameState or playerId");
-          return;
-        }
-
-        const player = gameState.players?.find((p) => p.id === playerId);
-        console.log("updateAmmoDisplay: player found", {
-          player: !!player,
-          playerId,
-          playersCount: gameState.players?.length,
-        });
-
-        if (!player) {
-          console.log("updateAmmoDisplay: player not found in players list");
-          return;
-        }
-
-        if (!ammoCountEl || !ammoMaxEl) {
-          console.log("updateAmmoDisplay: ammo elements not found", {
-            ammoCountEl: !!ammoCountEl,
-            ammoMaxEl: !!ammoMaxEl,
-          });
-          return;
-        }
-
-        const now = Date.now();
-        const ammoCount =
-          player.ammoCount !== undefined
-            ? player.ammoCount
-            : (player.ammoReadyTime || []).filter(
-                (readyTime) => readyTime <= now
-              ).length;
-        const ammoMax = player.ammoReadyTime?.length || 3;
-
-        console.log("updateAmmoDisplay: updating display", {
-          ammoCount,
-          ammoMax,
-          ammoCountFromServer: player.ammoCount,
-          ammoReadyTime: player.ammoReadyTime,
-          ammoReadyTimeLength: player.ammoReadyTime?.length,
-        });
-
-        ammoCountEl.textContent = ammoCount;
-        ammoMaxEl.textContent = ammoMax;
-
-        // Визуальная обратная связь: если зарядов нет, делаем текст красным
-        if (ammoCount === 0) {
-          ammoCountEl.style.color = "#ff4444";
-        } else {
-          ammoCountEl.style.color = "#fff";
-        }
-      }
-
-      function updateGameState() {
-        if (gameState.state === "lobby") {
-          updateLobby();
-        } else if (gameState.state === "playing") {
-          startPlaying();
-        } else if (gameState.state === "finished") {
-          showResults();
-        }
-      }
-
-      function updateLobby() {
-        lobbyEl.style.display = "flex";
-        controlsEl.style.display = "none";
-        resultsEl.style.display = "none";
-        keyboardHintEl.style.display = "none";
-        isGameActive = false;
-
-        // Update players list
-        playersListEl.innerHTML = "";
-        const connectedPlayers = (gameState.players || []).filter(
-          (p) => p.connected
-        );
-        connectedPlayers.forEach((player) => {
-          const item = document.createElement("div");
-          item.className = "playerItem";
-          item.innerHTML = `
-            <div class="playerColor" style="background: ${player.color}"></div>
-            <span>${player.name}</span>
-          `;
-          playersListEl.appendChild(item);
-        });
-
-        // Show start button only for host
-        console.log("Checking start button:", {
-          playerId: playerId,
-          hostId: gameState.hostId,
-          connectedPlayers: connectedPlayers.length,
-          isHost: playerId === gameState.hostId,
-          hasEnoughPlayers: connectedPlayers.length >= 2,
-        });
-
-        if (
-          playerId &&
-          gameState.hostId &&
-          playerId === gameState.hostId &&
-          connectedPlayers.length >= 2
-        ) {
-          startButtonEl.style.display = "block";
-          console.log("Start button shown");
-        } else {
-          startButtonEl.style.display = "none";
-          if (!playerId) console.log("playerId is not set");
-          if (!gameState.hostId) console.log("hostId is not set");
-          if (connectedPlayers.length < 2)
-            console.log("Not enough players:", connectedPlayers.length);
-        }
-      }
-
-      function updateAmmoDisplay() {
-        console.log("updateAmmoDisplay called", {
-          gameState: !!gameState,
-          playerId,
-          ammoCountEl: !!ammoCountEl,
-          ammoMaxEl: !!ammoMaxEl,
-        });
-
-        if (!gameState || !playerId) {
-          console.log("updateAmmoDisplay: missing gameState or playerId");
-          return;
-        }
-
-        const player = gameState.players?.find((p) => p.id === playerId);
-        console.log("updateAmmoDisplay: player found", {
-          player: !!player,
-          playerId,
-          playersCount: gameState.players?.length,
-        });
-
-        if (!player) {
-          console.log("updateAmmoDisplay: player not found in players list");
-          return;
-        }
-
-        if (!ammoCountEl || !ammoMaxEl) {
-          console.log("updateAmmoDisplay: ammo elements not found", {
-            ammoCountEl: !!ammoCountEl,
-            ammoMaxEl: !!ammoMaxEl,
-          });
-          return;
-        }
-
-        const now = Date.now();
-        const ammoCount =
-          player.ammoCount !== undefined
-            ? player.ammoCount
-            : (player.ammoReadyTime || []).filter(
-                (readyTime) => readyTime <= now
-              ).length;
-        const ammoMax = player.ammoReadyTime?.length || 3;
-
-        console.log("updateAmmoDisplay: updating display", {
-          ammoCount,
-          ammoMax,
-          ammoCountFromServer: player.ammoCount,
-          ammoReadyTime: player.ammoReadyTime,
-          ammoReadyTimeLength: player.ammoReadyTime?.length,
-        });
-
-        ammoCountEl.textContent = ammoCount;
-        ammoMaxEl.textContent = ammoMax;
-
-        // Визуальная обратная связь: если зарядов нет, делаем текст красным
-        if (ammoCount === 0) {
-          ammoCountEl.style.color = "#ff4444";
-        } else {
-          ammoCountEl.style.color = "#fff";
-        }
-      }
-
-      function startPlaying() {
-        lobbyEl.style.display = "none";
-        resultsEl.style.display = "none";
-        controlsEl.style.display = "flex";
-        keyboardHintEl.style.display = "block";
-        isGameActive = true;
-        statusEl.textContent = `Игра началась, ${playerName}!`;
-        updateAmmoDisplay();
-      }
-
-      function showResults() {
-        lobbyEl.style.display = "none";
-        controlsEl.style.display = "none";
-        keyboardHintEl.style.display = "none";
-        resultsEl.style.display = "flex";
-        isGameActive = false;
-
-        // Update results list
-        resultsListEl.innerHTML = "";
-        if (gameState.results && gameState.results.length > 0) {
-          gameState.results.forEach((result, index) => {
-            const isWinner = index === 0 && result.alive;
-            const item = document.createElement("div");
-            item.className = `resultItem ${isWinner ? "winner" : ""}`;
-            item.innerHTML = `
-              <div class="resultPlace">#${index + 1}</div>
-              <div class="resultName">
-                <div class="playerColor" style="background: ${
-                  result.color
-                }"></div>
-                <span>${result.name}</span>
-              </div>
-              <div class="resultStats">
-                <span>Убийства: ${result.kills}</span>
-                <span>Смерти: ${result.deaths}</span>
-              </div>
-            `;
-            resultsListEl.appendChild(item);
-          });
-        }
-      }
-
       startButtonEl.addEventListener("click", () => {
         if (ws && ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: "startGame" }));
@@ -1261,6 +1102,9 @@
         playerName = nameInputEl.value;
       }
       nameInputEl.focus();
+
+      // Initialize connection on page load
+      connect();
     </script>
   </body>
 </html>

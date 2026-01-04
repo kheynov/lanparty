@@ -1,8 +1,8 @@
 import { WebSocket } from "ws";
-import { GameState, } from "../shared/game-types.js";
-import { MAX_PLAYERS, GAME_WIDTH, GAME_HEIGHT, ACCELERATION, MAX_SPEED, FRICTION, BULLET_SPEED, TURN_SPEED, TURN_SPEED_MAX, TURN_ACCELERATION_TIME, SHIP_SIZE, SHIP_MAX_RADIUS, COLLISION_DISTANCE, COLLISION_FORCE, RESTITUTION, PLAYER_COLORS, GAME_FPS, ROUND_END_DELAY, DOUBLE_TAP_TIME, DRIFT_ANGLE, DRIFT_BOOST, AMMO_CLIP_SIZE, AMMO_RELOAD_TIME, } from "./game-constants.js";
+import { GameState, CollectableType, AsteroidType, } from "../shared/game-types.js";
+import { MAX_PLAYERS, GAME_WIDTH, GAME_HEIGHT, ACCELERATION, MAX_SPEED, FRICTION, BULLET_SPEED, TURN_SPEED, TURN_SPEED_MAX, TURN_ACCELERATION_TIME, SHIP_SIZE, SHIP_MAX_RADIUS, COLLISION_DISTANCE, COLLISION_FORCE, RESTITUTION, PLAYER_COLORS, GAME_FPS, ROUND_END_DELAY, DOUBLE_TAP_TIME, DRIFT_ANGLE, DRIFT_BOOST, AMMO_CLIP_SIZE, AMMO_RELOAD_TIME, COLLECTABLE_SPAWN_INTERVAL, COLLECTABLE_SPAWN_CHANCE, REVERSE_TURN_DURATION, LASER_BACKWARD_FORCE, COLLECTABLE_COLLECTION_DISTANCE, WALL_THICKNESS, ASTEROID_MIN_RADIUS, ASTEROID_MAX_RADIUS, ASTEROID_COUNT, ANTIGRAVITY_FORCE, ANTIGRAVITY_RANGE, } from "./game-constants.js";
 export class GameManager {
-    constructor() {
+    constructor(roomCode) {
         this.players = new Map();
         this.bullets = [];
         this.gameLoop = null;
@@ -11,17 +11,47 @@ export class GameManager {
         this.roundResults = [];
         this.playerIdCounter = 0;
         this.clients = new Set();
-        this.lastTurnTime = new Map(); // Время последнего поворота для каждого игрока
-        this.turningPlayers = new Set(); // Игроки, которые сейчас поворачиваются
-        this.turnStartTime = new Map(); // Время начала поворота для каждого игрока
-        this.nextRoundTime = null; // Время начала следующего раунда
-        this.killLog = []; // Килл-лог текущего раунда
+        this.lastTurnTime = new Map();
+        this.turningPlayers = new Set();
+        this.turnStartTime = new Map();
+        this.nextRoundTime = null;
+        this.killLog = [];
+        this.roomCode = null;
+        this.collectables = [];
+        this.lastCollectableSpawn = 0;
+        this.collectableIdCounter = 0;
+        this.asteroids = [];
+        this.walls = [];
+        this.asteroidIdCounter = 0;
+        this.pilots = [];
+        this.pilotIdCounter = 0;
+        this.roomCode = roomCode || null;
+    }
+    setRoomCode(roomCode) {
+        this.roomCode = roomCode;
+    }
+    getRoomCode() {
+        return this.roomCode;
+    }
+    /**
+     * Initialize ammo for a player with first charge ready and others reloading
+     */
+    initializeAmmo(now = Date.now()) {
+        const ammoReadyTime = [];
+        ammoReadyTime[0] = now; // First charge ready immediately
+        for (let i = 1; i < AMMO_CLIP_SIZE; i++) {
+            ammoReadyTime[i] = now + i * AMMO_RELOAD_TIME; // Others reload sequentially
+        }
+        return ammoReadyTime;
     }
     addClient(ws) {
         this.clients.add(ws);
     }
     removeClient(ws) {
         this.clients.delete(ws);
+    }
+    getClients() {
+        return this.clients;
     }
     getState() {
         return this.state;
@@ -40,13 +70,6 @@ export class GameManager {
         const usedColors = Array.from(this.players.values())
             .map((p) => p.color)
             .filter((c) => c);
-        const now = Date.now();
-        // Инициализируем заряды: первый готов сразу, остальные будут готовы через AMMO_RELOAD_TIME
-        const ammoReadyTime = [];
-        ammoReadyTime[0] = now; // Первый заряд готов сразу
-        for (let i = 1; i < AMMO_CLIP_SIZE; i++) {
-            ammoReadyTime[i] = now + i * AMMO_RELOAD_TIME; // Остальные заряжаются последовательно
-        }
         const player = {
             id: playerId,
             uuid: uuid,
@@ -58,10 +81,10 @@ export class GameManager {
             velocityY: 0,
             color: this.getRandomColor(usedColors),
             alive: true,
-            connected: true,
+            connected: true, // Убеждаемся, что игрок помечен как подключенный
             kills: 0,
             deaths: 0,
-            ammoReadyTime: ammoReadyTime,
+            ammoReadyTime: this.initializeAmmo(),
         };
         if (!this.hostId) {
             this.hostId = playerId;
@@ -106,7 +129,23 @@ export class GameManager {
         if (this.state !== GameState.PLAYING)
             return;
         const player = this.players.get(playerId);
-        if (!player || !player.alive || !player.connected)
+        if (!player || !player.connected)
+            return;
+        // Если игрок мертв, но есть пилот, управляем пилотом
+        if (!player.alive && player.pilotId) {
+            const pilot = this.pilots.find((p) => p.id === player.pilotId);
+            if (pilot && pilot.alive) {
+                // Пилот поворачивается как корабль
+                const now = Date.now();
+                if (!this.turningPlayers.has(playerId)) {
+                    this.turningPlayers.add(playerId);
+                    this.turnStartTime.set(playerId, now);
+                    this.lastTurnTime.set(playerId, now);
+                }
+                return;
+            }
+        }
+        if (!player.alive || !player.connected)
             return;
         const now = Date.now();
         const lastTurn = this.lastTurnTime.get(playerId);
@@ -159,7 +198,11 @@ export class GameManager {
                     // Коэффициент 2.0 делает кривую еще более плавной и естественной
                     const smoothFactor = 1 - Math.exp(-normalizedTime * 2.0);
                     // Вычисляем скорость поворота от базовой до максимальной
-                    const currentTurnSpeed = TURN_SPEED + (TURN_SPEED_MAX - TURN_SPEED) * smoothFactor;
+                    let currentTurnSpeed = TURN_SPEED + (TURN_SPEED_MAX - TURN_SPEED) * smoothFactor;
+                    // Проверяем эффект реверса поворота
+                    if (player.reverseTurnUntil && player.reverseTurnUntil > now) {
+                        currentTurnSpeed = -currentTurnSpeed; // Инвертируем направление
+                    }
                     player.angle += currentTurnSpeed;
                 }
                 else {
@@ -173,7 +216,21 @@ export class GameManager {
         if (this.state !== GameState.PLAYING)
             return;
         const player = this.players.get(playerId);
-        if (!player || !player.alive || !player.connected)
+        if (!player || !player.connected)
+            return;
+        // Если игрок мертв, но есть пилот, управляем пилотом
+        if (!player.alive && player.pilotId) {
+            const pilot = this.pilots.find((p) => p.id === player.pilotId);
+            if (pilot && pilot.alive) {
+                // Пилот движется по прямой при нажатии выстрела
+                const accelX = Math.cos(pilot.angle) * ACCELERATION;
+                const accelY = Math.sin(pilot.angle) * ACCELERATION;
+                pilot.velocityX += accelX;
+                pilot.velocityY += accelY;
+                return;
+            }
+        }
+        if (!player.alive || !player.connected)
             return;
         const now = Date.now();
         // Находим первый готовый заряд
@@ -189,13 +246,116 @@ export class GameManager {
             return;
         // Используем заряд - устанавливаем время следующей перезарядки
         player.ammoReadyTime[readyAmmoIndex] = now + AMMO_RELOAD_TIME;
+        // Проверяем, есть ли у игрока лазер
+        const hasLaser = this.checkPlayerHasCollectable(playerId, CollectableType.LASER);
         const bullet = {
             x: player.x + Math.cos(player.angle) * (SHIP_SIZE + 5),
             y: player.y + Math.sin(player.angle) * (SHIP_SIZE + 5),
             angle: player.angle,
             ownerId: playerId,
+            laser: hasLaser,
         };
         this.bullets.push(bullet);
+        // Если это лазер, отбрасываем игрока назад
+        if (hasLaser) {
+            player.velocityX -= Math.cos(player.angle) * LASER_BACKWARD_FORCE;
+            player.velocityY -= Math.sin(player.angle) * LASER_BACKWARD_FORCE;
+        }
+    }
+    /**
+     * Проверяет, есть ли у игрока активный collectable определенного типа
+     */
+    checkPlayerHasCollectable(playerId, type) {
+        const player = this.players.get(playerId);
+        if (!player)
+            return false;
+        switch (type) {
+            case CollectableType.LASER:
+                // Лазер - одноразовый, проверяем наличие в collectables (еще не удален)
+                const laserCollectable = this.collectables.find((c) => c.collectedBy === playerId && c.type === CollectableType.LASER);
+                if (laserCollectable) {
+                    // Удаляем после использования
+                    const index = this.collectables.indexOf(laserCollectable);
+                    if (index > -1) {
+                        this.collectables.splice(index, 1);
+                    }
+                    return true;
+                }
+                return false;
+            case CollectableType.SHIELD:
+                return player.hasShield === true;
+            case CollectableType.LASER_BLADE:
+                return player.hasLaserBlade === true;
+            default:
+                return false;
+        }
+    }
+    /**
+     * Спавнит случайный collectable на карте
+     */
+    spawnCollectable() {
+        const types = [
+            CollectableType.REVERSE_TURN,
+            CollectableType.LASER,
+            CollectableType.SHIELD,
+            CollectableType.LASER_BLADE,
+        ];
+        const randomType = types[Math.floor(Math.random() * types.length)];
+        const collectable = {
+            id: `collectable_${this.collectableIdCounter++}`,
+            x: Math.random() * (GAME_WIDTH - 100) + 50,
+            y: Math.random() * (GAME_HEIGHT - 100) + 50,
+            type: randomType,
+        };
+        this.collectables.push(collectable);
+    }
+    /**
+     * Проверяет столкновения игроков с collectables
+     */
+    checkCollectableCollisions() {
+        const now = Date.now();
+        this.collectables = this.collectables.filter((collectable) => {
+            if (collectable.collectedBy)
+                return true; // Уже собран
+            this.players.forEach((player, playerId) => {
+                if (!player.alive || !player.connected)
+                    return;
+                const dx = collectable.x - player.x;
+                const dy = collectable.y - player.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                if (distance < COLLECTABLE_COLLECTION_DISTANCE) {
+                    collectable.collectedBy = playerId;
+                    this.applyCollectableEffect(playerId, collectable.type, now);
+                }
+            });
+            return !collectable.collectedBy; // Удаляем собранные
+        });
+    }
+    /**
+     * Применяет эффект collectable к игроку
+     */
+    applyCollectableEffect(playerId, type, now) {
+        const player = this.players.get(playerId);
+        if (!player)
+            return;
+        switch (type) {
+            case CollectableType.REVERSE_TURN:
+                // Инвертируем поворот для всех игроков
+                this.players.forEach((p) => {
+                    p.reverseTurnUntil = now + REVERSE_TURN_DURATION;
+                });
+                break;
+            case CollectableType.LASER:
+                // Лазер - одноразовый, не нужно хранить состояние
+                // Эффект применяется при выстреле
+                break;
+            case CollectableType.SHIELD:
+                player.hasShield = true;
+                break;
+            case CollectableType.LASER_BLADE:
+                player.hasLaserBlade = true;
+                break;
+        }
     }
     /**
      * Размещает игроков по периметру карты, направленными в центр
@@ -275,16 +435,51 @@ export class GameManager {
             player.angle = Math.atan2(centerY - y, centerX - x);
         });
     }
+    /**
+     * Генерирует окружение: стены и астероиды
+     */
+    generateEnvironment() {
+        this.asteroids = [];
+        this.walls = [];
+        this.asteroidIdCounter = 0;
+        // Стены убраны - больше не генерируем стены в центре
+        // Генерируем астероиды
+        for (let i = 0; i < ASTEROID_COUNT; i++) {
+            const radius = ASTEROID_MIN_RADIUS +
+                Math.random() * (ASTEROID_MAX_RADIUS - ASTEROID_MIN_RADIUS);
+            const types = [
+                AsteroidType.EMPTY,
+                AsteroidType.ORANGE,
+                AsteroidType.ANTIGRAVITY,
+            ];
+            const randomType = types[Math.floor(Math.random() * types.length)];
+            const asteroid = {
+                id: `asteroid_${this.asteroidIdCounter++}`,
+                x: Math.random() * (GAME_WIDTH - radius * 2) + radius,
+                y: Math.random() * (GAME_HEIGHT - radius * 2) + radius,
+                radius: radius,
+                type: randomType,
+                health: randomType === AsteroidType.EMPTY ||
+                    randomType === AsteroidType.ORANGE
+                    ? 1
+                    : undefined,
+            };
+            this.asteroids.push(asteroid);
+        }
+    }
     startGame() {
         if (this.state !== GameState.LOBBY)
             return;
         if (this.players.size < 2)
             return;
         this.bullets = [];
+        this.collectables = [];
         this.killLog = []; // Очищаем килл-лог при старте нового раунда
         this.lastTurnTime.clear(); // Очищаем время последних поворотов при старте игры
         this.turningPlayers.clear(); // Очищаем список поворачивающихся игроков
         this.turnStartTime.clear(); // Очищаем время начала поворотов
+        this.lastCollectableSpawn = Date.now();
+        this.generateEnvironment(); // Генерируем окружение
         const now = Date.now();
         this.players.forEach((player) => {
             if (player.connected) {
@@ -295,12 +490,11 @@ export class GameManager {
                     player.kills = 0;
                 if (!player.deaths)
                     player.deaths = 0;
-                // Инициализируем заряды: первый готов сразу, остальные будут готовы через AMMO_RELOAD_TIME
-                player.ammoReadyTime = [];
-                player.ammoReadyTime[0] = now; // Первый заряд готов сразу
-                for (let i = 1; i < AMMO_CLIP_SIZE; i++) {
-                    player.ammoReadyTime[i] = now + i * AMMO_RELOAD_TIME; // Остальные заряжаются последовательно
-                }
+                player.ammoReadyTime = this.initializeAmmo(now);
+                // Сбрасываем эффекты collectables
+                player.reverseTurnUntil = undefined;
+                player.hasShield = false;
+                player.hasLaserBlade = false;
             }
         });
         // Размещаем игроков по периметру карты
@@ -323,8 +517,20 @@ export class GameManager {
         }
     }
     updateGame() {
+        const now = Date.now();
+        // Spawn collectables periodically
+        if (now - this.lastCollectableSpawn >= COLLECTABLE_SPAWN_INTERVAL) {
+            if (Math.random() < COLLECTABLE_SPAWN_CHANCE) {
+                this.spawnCollectable();
+            }
+            this.lastCollectableSpawn = now;
+        }
         // Apply turns for players who are turning
         this.applyTurns();
+        // Check collectable collisions
+        this.checkCollectableCollisions();
+        // Apply antigravity forces
+        this.applyAntigravityForce();
         // Update players
         this.players.forEach((player) => {
             if (!player.alive || !player.connected)
@@ -345,6 +551,8 @@ export class GameManager {
             }
             // Check collisions with other players
             this.checkPlayerCollisions(player);
+            // Check collisions with walls
+            this.checkWallCollisions(player);
             // Update position
             player.x += player.velocityX;
             player.y += player.velocityY;
@@ -358,26 +566,151 @@ export class GameManager {
             if (player.y > GAME_HEIGHT)
                 player.y = 0;
         });
+        // Update pilots
+        this.pilots = this.pilots.filter((pilot) => {
+            if (!pilot.alive)
+                return false;
+            // Применяем трение
+            pilot.velocityX *= FRICTION;
+            pilot.velocityY *= FRICTION;
+            // Ограничиваем скорость
+            const speed = Math.sqrt(pilot.velocityX ** 2 + pilot.velocityY ** 2);
+            if (speed > MAX_SPEED) {
+                pilot.velocityX = (pilot.velocityX / speed) * MAX_SPEED;
+                pilot.velocityY = (pilot.velocityY / speed) * MAX_SPEED;
+            }
+            // Обновляем позицию
+            pilot.x += pilot.velocityX;
+            pilot.y += pilot.velocityY;
+            // Wrap around screen
+            if (pilot.x < 0)
+                pilot.x = GAME_WIDTH;
+            if (pilot.x > GAME_WIDTH)
+                pilot.x = 0;
+            if (pilot.y < 0)
+                pilot.y = GAME_HEIGHT;
+            if (pilot.y > GAME_HEIGHT)
+                pilot.y = 0;
+            // Проверяем столкновения пилота с пулями
+            let hitByBullet = false;
+            this.bullets.forEach((bullet) => {
+                const dx = bullet.x - pilot.x;
+                const dy = bullet.y - pilot.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                const pilotSize = SHIP_SIZE / 4;
+                if (distance < pilotSize) {
+                    // Пилот убит пулей
+                    hitByBullet = true;
+                    const killer = this.players.get(bullet.ownerId);
+                    if (killer) {
+                        killer.kills++;
+                        const player = this.players.get(pilot.playerId);
+                        if (player) {
+                            player.deaths++;
+                            // Добавляем запись в килл-лог
+                            const killEntry = {
+                                killerId: killer.id,
+                                killerName: killer.name,
+                                killerColor: killer.color,
+                                victimId: player.id,
+                                victimName: player.name,
+                                victimColor: player.color,
+                                timestamp: Date.now(),
+                            };
+                            this.killLog.push(killEntry);
+                        }
+                    }
+                }
+            });
+            if (hitByBullet) {
+                const player = this.players.get(pilot.playerId);
+                if (player) {
+                    player.pilotId = undefined;
+                }
+                return false; // Удаляем пилота
+            }
+            // Проверяем столкновения пилота с кораблями
+            let hitByShip = false;
+            for (const [, shipPlayer] of this.players.entries()) {
+                if (!shipPlayer.alive || !shipPlayer.connected)
+                    continue;
+                const dx = pilot.x - shipPlayer.x;
+                const dy = pilot.y - shipPlayer.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                const pilotSize = SHIP_SIZE / 4;
+                if (distance < SHIP_MAX_RADIUS + pilotSize) {
+                    // Пилот убит столкновением с кораблем
+                    hitByShip = true;
+                    const player = this.players.get(pilot.playerId);
+                    if (player) {
+                        player.deaths++;
+                        shipPlayer.kills++;
+                        // Добавляем запись в килл-лог
+                        const killEntry = {
+                            killerId: shipPlayer.id,
+                            killerName: shipPlayer.name,
+                            killerColor: shipPlayer.color,
+                            victimId: player.id,
+                            victimName: player.name,
+                            victimColor: player.color,
+                            timestamp: Date.now(),
+                        };
+                        this.killLog.push(killEntry);
+                        player.pilotId = undefined;
+                    }
+                    break; // Выходим из цикла, так как пилот уже убит
+                }
+            }
+            if (hitByShip) {
+                return false; // Удаляем пилота
+            }
+            return true; // Пилот жив
+        });
         // Update bullets
         this.bullets = this.bullets.filter((bullet) => {
             bullet.x += Math.cos(bullet.angle) * BULLET_SPEED;
             bullet.y += Math.sin(bullet.angle) * BULLET_SPEED;
-            // Remove off-screen bullets
-            if (bullet.x < 0 ||
-                bullet.x > GAME_WIDTH ||
-                bullet.y < 0 ||
-                bullet.y > GAME_HEIGHT) {
-                return false;
+            // Лазерные пули не удаляются при выходе за границы сразу
+            if (bullet.laser) {
+                // Лазер проходит через всю карту, удаляем только при выходе далеко за границы
+                if (bullet.x < -100 ||
+                    bullet.x > GAME_WIDTH + 100 ||
+                    bullet.y < -100 ||
+                    bullet.y > GAME_HEIGHT + 100) {
+                    return false;
+                }
+            }
+            else {
+                // Обычные пули удаляются при выходе за границы
+                if (bullet.x < 0 ||
+                    bullet.x > GAME_WIDTH ||
+                    bullet.y < 0 ||
+                    bullet.y > GAME_HEIGHT) {
+                    return false;
+                }
+            }
+            // Check collision with asteroids
+            let asteroidHit = this.checkAsteroidCollisions(bullet);
+            if (asteroidHit) {
+                return false; // Пуля уничтожена
             }
             // Check collision with players
             let hit = false;
-            this.players.forEach((player, playerId) => {
+            for (const [playerId, player] of this.players.entries()) {
                 if (!player.alive || playerId === bullet.ownerId)
-                    return;
+                    continue;
                 const dx = bullet.x - player.x;
                 const dy = bullet.y - player.y;
                 const distance = Math.sqrt(dx ** 2 + dy ** 2);
                 if (distance < SHIP_SIZE * 0.6) {
+                    // Проверяем щит
+                    if (player.hasShield) {
+                        player.hasShield = false;
+                        hit = true;
+                        break; // Пуля уничтожена, но игрок жив
+                    }
+                    // Спавним пилота вместо полного уничтожения
+                    this.spawnPilot(playerId, player.x, player.y);
                     player.alive = false;
                     player.deaths++;
                     const killer = this.players.get(bullet.ownerId);
@@ -396,8 +729,9 @@ export class GameManager {
                         this.killLog.push(killEntry);
                     }
                     hit = true;
+                    break; // Пуля попала, выходим из цикла
                 }
-            });
+            }
             return !hit;
         });
         // Check if game should end
@@ -421,6 +755,53 @@ export class GameManager {
             const ship2Points = this.getShipTrianglePoints(otherPlayer.x, otherPlayer.y, otherPlayer.angle);
             const isColliding = this.trianglesCollide(ship1Points, ship2Points);
             if (isColliding && distance > 0) {
+                // Проверяем клинок-лазер
+                if (player.hasLaserBlade && otherPlayer.alive) {
+                    // Игрок с клинком наносит урон при столкновении
+                    if (otherPlayer.hasShield) {
+                        otherPlayer.hasShield = false;
+                    }
+                    else {
+                        otherPlayer.alive = false;
+                        otherPlayer.deaths++;
+                        player.kills++;
+                        // Добавляем запись в килл-лог
+                        const killEntry = {
+                            killerId: player.id,
+                            killerName: player.name,
+                            killerColor: player.color,
+                            victimId: otherPlayer.id,
+                            victimName: otherPlayer.name,
+                            victimColor: otherPlayer.color,
+                            timestamp: Date.now(),
+                        };
+                        this.killLog.push(killEntry);
+                    }
+                }
+                else if (otherPlayer.hasLaserBlade && player.alive) {
+                    // Другой игрок с клинком наносит урон
+                    if (player.hasShield) {
+                        player.hasShield = false;
+                    }
+                    else {
+                        // Спавним пилота вместо полного уничтожения
+                        this.spawnPilot(player.id, player.x, player.y);
+                        player.alive = false;
+                        player.deaths++;
+                        otherPlayer.kills++;
+                        // Добавляем запись в килл-лог
+                        const killEntry = {
+                            killerId: otherPlayer.id,
+                            killerName: otherPlayer.name,
+                            killerColor: otherPlayer.color,
+                            victimId: player.id,
+                            victimName: player.name,
+                            victimColor: player.color,
+                            timestamp: Date.now(),
+                        };
+                        this.killLog.push(killEntry);
+                    }
+                }
                 const minOverlap = SHIP_MAX_RADIUS * 0.1;
                 const overlap = Math.max(minOverlap, COLLISION_DISTANCE - distance);
                 const collisionAngle = Math.atan2(dy, dx);
@@ -481,6 +862,164 @@ export class GameManager {
         }
         return false;
     }
+    /**
+     * Спавнит пилота при уничтожении корабля
+     */
+    spawnPilot(playerId, x, y) {
+        const player = this.players.get(playerId);
+        if (!player)
+            return;
+        // Удаляем предыдущего пилота, если есть
+        if (player.pilotId) {
+            const oldPilot = this.pilots.find((p) => p.id === player.pilotId);
+            if (oldPilot) {
+                const index = this.pilots.indexOf(oldPilot);
+                if (index > -1) {
+                    this.pilots.splice(index, 1);
+                }
+            }
+        }
+        const pilot = {
+            id: `pilot_${this.pilotIdCounter++}`,
+            playerId: playerId,
+            x: x,
+            y: y,
+            angle: player.angle,
+            velocityX: 0,
+            velocityY: 0,
+            alive: true,
+        };
+        this.pilots.push(pilot);
+        player.pilotId = pilot.id;
+    }
+    /**
+     * Проверяет столкновения игрока со стенами
+     */
+    checkWallCollisions(player) {
+        this.walls.forEach((wall) => {
+            // Все стены неразрушаемые и блокируют движение
+            // Проверяем расстояние от точки до отрезка
+            const dx = wall.x2 - wall.x1;
+            const dy = wall.y2 - wall.y1;
+            const length = Math.sqrt(dx * dx + dy * dy);
+            if (length === 0)
+                return;
+            const t = Math.max(0, Math.min(1, ((player.x - wall.x1) * dx + (player.y - wall.y1) * dy) /
+                (length * length)));
+            const closestX = wall.x1 + t * dx;
+            const closestY = wall.y1 + t * dy;
+            const distX = player.x - closestX;
+            const distY = player.y - closestY;
+            const distance = Math.sqrt(distX * distX + distY * distY);
+            if (distance < SHIP_MAX_RADIUS + WALL_THICKNESS / 2) {
+                // Отталкиваем игрока от стены
+                const normalX = distX / distance;
+                const normalY = distY / distance;
+                const overlap = SHIP_MAX_RADIUS + WALL_THICKNESS / 2 - distance;
+                player.x += normalX * overlap;
+                player.y += normalY * overlap;
+                // Отражение скорости
+                const dot = player.velocityX * normalX + player.velocityY * normalY;
+                player.velocityX -= 2 * dot * normalX * RESTITUTION;
+                player.velocityY -= 2 * dot * normalY * RESTITUTION;
+            }
+        });
+    }
+    /**
+     * Проверяет столкновения пуль с астероидами
+     */
+    checkAsteroidCollisions(bullet) {
+        for (let i = this.asteroids.length - 1; i >= 0; i--) {
+            const asteroid = this.asteroids[i];
+            if (asteroid.type === AsteroidType.ANTIGRAVITY)
+                continue; // Антигравитационные не разрушаются
+            const dx = bullet.x - asteroid.x;
+            const dy = bullet.y - asteroid.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            if (distance < asteroid.radius) {
+                // Астероид разрушен
+                if (asteroid.type === AsteroidType.ORANGE) {
+                    // Спавним collectable из оранжевого астероида
+                    this.spawnCollectableFromAsteroid(asteroid.x, asteroid.y);
+                }
+                this.asteroids.splice(i, 1);
+                return true; // Пуля уничтожена
+            }
+        }
+        return false;
+    }
+    // Метод checkDestructibleWallCollisions удален, так как разрушаемые стены убраны
+    /**
+     * Спавнит collectable из разрушенного оранжевого астероида
+     */
+    spawnCollectableFromAsteroid(x, y) {
+        const types = [
+            CollectableType.REVERSE_TURN,
+            CollectableType.LASER,
+            CollectableType.SHIELD,
+            CollectableType.LASER_BLADE,
+        ];
+        const randomType = types[Math.floor(Math.random() * types.length)];
+        const collectable = {
+            id: `collectable_${this.collectableIdCounter++}`,
+            x: x,
+            y: y,
+            type: randomType,
+        };
+        this.collectables.push(collectable);
+    }
+    /**
+     * Применяет антигравитационные силы от астероидов
+     */
+    applyAntigravityForce() {
+        this.asteroids.forEach((asteroid) => {
+            if (asteroid.type !== AsteroidType.ANTIGRAVITY)
+                return;
+            // Применяем к игрокам
+            this.players.forEach((player) => {
+                if (!player.alive || !player.connected)
+                    return;
+                const dx = player.x - asteroid.x;
+                const dy = player.y - asteroid.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                if (distance < ANTIGRAVITY_RANGE && distance > 0) {
+                    const force = ANTIGRAVITY_FORCE / (distance / ANTIGRAVITY_RANGE);
+                    const normalX = dx / distance;
+                    const normalY = dy / distance;
+                    player.velocityX += normalX * force;
+                    player.velocityY += normalY * force;
+                }
+            });
+            // Применяем к пулям
+            this.bullets.forEach((bullet) => {
+                const dx = bullet.x - asteroid.x;
+                const dy = bullet.y - asteroid.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                if (distance < ANTIGRAVITY_RANGE && distance > 0) {
+                    const force = ANTIGRAVITY_FORCE / (distance / ANTIGRAVITY_RANGE);
+                    const normalX = dx / distance;
+                    const normalY = dy / distance;
+                    bullet.x += normalX * force;
+                    bullet.y += normalY * force;
+                }
+            });
+            // Применяем к пилотам
+            this.pilots.forEach((pilot) => {
+                if (!pilot.alive)
+                    return;
+                const dx = pilot.x - asteroid.x;
+                const dy = pilot.y - asteroid.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                if (distance < ANTIGRAVITY_RANGE && distance > 0) {
+                    const force = ANTIGRAVITY_FORCE / (distance / ANTIGRAVITY_RANGE);
+                    const normalX = dx / distance;
+                    const normalY = dy / distance;
+                    pilot.velocityX += normalX * force;
+                    pilot.velocityY += normalY * force;
+                }
+            });
+        });
+    }
     endRound() {
         this.stopGameLoop();
         this.state = GameState.FINISHED;
@@ -524,12 +1063,7 @@ export class GameManager {
                 player.angle = Math.random() * Math.PI * 2;
                 player.velocityX = 0;
                 player.velocityY = 0;
-                // Инициализируем заряды: первый готов сразу, остальные будут готовы через AMMO_RELOAD_TIME
-                player.ammoReadyTime = [];
-                player.ammoReadyTime[0] = now; // Первый заряд готов сразу
-                for (let i = 1; i < AMMO_CLIP_SIZE; i++) {
-                    player.ammoReadyTime[i] = now + i * AMMO_RELOAD_TIME; // Остальные заряжаются последовательно
-                }
+                player.ammoReadyTime = this.initializeAmmo(now);
             }
         });
         this.broadcastGameState();
@@ -554,10 +1088,49 @@ export class GameManager {
                 ammoCount: ammoCount,
             };
         });
+        // Логируем количество игроков для отладки
+        const connectedCount = players.filter((p) => p.connected).length;
+        if (players.length > 0) {
+            console.log(`getGameState: Total players: ${players.length}, Connected: ${connectedCount}`);
+        }
         const bullets = this.bullets.map((bullet) => ({
             x: bullet.x,
             y: bullet.y,
             angle: bullet.angle,
+            laser: bullet.laser,
+        }));
+        const collectables = this.collectables
+            .filter((c) => !c.collectedBy)
+            .map((c) => ({
+            id: c.id,
+            x: c.x,
+            y: c.y,
+            type: c.type,
+        }));
+        const asteroids = this.asteroids.map((a) => ({
+            id: a.id,
+            x: a.x,
+            y: a.y,
+            radius: a.radius,
+            type: a.type,
+        }));
+        const walls = this.walls.map((w) => ({
+            id: w.id,
+            x1: w.x1,
+            y1: w.y1,
+            x2: w.x2,
+            y2: w.y2,
+            destructible: w.destructible,
+        }));
+        const pilots = this.pilots
+            .filter((p) => p.alive)
+            .map((p) => ({
+            id: p.id,
+            playerId: p.playerId,
+            x: p.x,
+            y: p.y,
+            angle: p.angle,
+            alive: p.alive,
         }));
         return {
             state: this.state,
@@ -567,14 +1140,29 @@ export class GameManager {
             results: this.roundResults,
             nextRoundTime: this.nextRoundTime || undefined,
             killLog: [...this.killLog], // Всегда отправляем массив (может быть пустым)
+            roomCode: this.roomCode || undefined,
+            collectables: collectables.length > 0 ? collectables : undefined,
+            asteroids: asteroids.length > 0 ? asteroids : undefined,
+            walls: walls.length > 0 ? walls : undefined,
+            pilots: pilots.length > 0 ? pilots : undefined,
         };
     }
     broadcastGameState() {
         const state = this.getGameState();
         const message = JSON.stringify({ type: "gameState", data: state });
+        console.log(`broadcastGameState: Sending to ${this.clients.size} clients, players: ${state.players.length}`);
         this.clients.forEach((client) => {
             if (client.readyState === WebSocket.OPEN) {
-                client.send(message);
+                try {
+                    client.send(message);
+                }
+                catch (error) {
+                    console.error("Error sending game state to client:", error);
+                    this.clients.delete(client);
+                }
+            }
+            else {
+                console.log(`Client not ready, state: ${client.readyState}`);
             }
         });
     }

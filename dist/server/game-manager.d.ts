@@ -14,9 +14,25 @@ export declare class GameManager {
     private turnStartTime;
     private nextRoundTime;
     private killLog;
-    constructor();
+    private roomCode;
+    private collectables;
+    private lastCollectableSpawn;
+    private collectableIdCounter;
+    private asteroids;
+    private walls;
+    private asteroidIdCounter;
+    private pilots;
+    private pilotIdCounter;
+    constructor(roomCode?: string);
+    setRoomCode(roomCode: string): void;
+    getRoomCode(): string | null;
+    /**
+     * Initialize ammo for a player with first charge ready and others reloading
+     */
+    private initializeAmmo;
     addClient(ws: WebSocket): void;
     removeClient(ws: WebSocket): void;
+    getClients(): Set<WebSocket>;
     getState(): GameState;
     getPlayers(): Map<string, Player>;
     getHostId(): string | null;
@@ -36,9 +52,29 @@ export declare class GameManager {
     private applyTurns;
     shootBullet(playerId: string): void;
     /**
+     * Проверяет, есть ли у игрока активный collectable определенного типа
+     */
+    private checkPlayerHasCollectable;
+    /**
+     * Спавнит случайный collectable на карте
+     */
+    private spawnCollectable;
+    /**
+     * Проверяет столкновения игроков с collectables
+     */
+    private checkCollectableCollisions;
+    /**
+     * Применяет эффект collectable к игроку
+     */
+    private applyCollectableEffect;
+    /**
      * Размещает игроков по периметру карты, направленными в центр
      */
     private positionPlayersOnPerimeter;
+    /**
+     * Генерирует окружение: стены и астероиды
+     */
+    private generateEnvironment;
     startGame(): void;
     private startGameLoop;
     private stopGameLoop;
@@ -47,6 +83,26 @@ export declare class GameManager {
     private getShipTrianglePoints;
     private pointInTriangle;
     private trianglesCollide;
+    /**
+     * Спавнит пилота при уничтожении корабля
+     */
+    private spawnPilot;
+    /**
+     * Проверяет столкновения игрока со стенами
+     */
+    private checkWallCollisions;
+    /**
+     * Проверяет столкновения пуль с астероидами
+     */
+    private checkAsteroidCollisions;
+    /**
+     * Спавнит collectable из разрушенного оранжевого астероида
+     */
+    private spawnCollectableFromAsteroid;
+    /**
+     * Применяет антигравитационные силы от астероидов
+     */
+    private applyAntigravityForce;
     private endRound;
     private resetToLobby;
     getGameState(): GameStateData;

@@ -234,6 +234,32 @@
       <button id="startButton">Начать игру</button>
       <div id="lobby">
         <h2>🚀 Комната ожидания</h2>
+        <div
+          id="roomCodeDisplay"
+          style="
+            text-align: center;
+            margin-bottom: 20px;
+            color: #4caf50;
+            font-size: 32px;
+            font-weight: bold;
+            letter-spacing: 4px;
+            padding: 15px;
+            background: rgba(0, 0, 0, 0.5);
+            border-radius: 10px;
+            border: 2px solid #4caf50;
+          "
+        ></div>
+        <div
+          id="roomCodeHint"
+          style="
+            text-align: center;
+            margin-bottom: 20px;
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 16px;
+          "
+        >
+          Используйте этот код для присоединения
+        </div>
         <div id="lobbyPlayersList"></div>
         <div id="lobbyStatus">Ожидание игроков...</div>
       </div>
@@ -256,6 +282,7 @@
       const killLogEl = document.getElementById("killLog");
 
       let lastKillLogLength = 0; // Для отслеживания новых записей в килл-логе
+      let animationTime = 0; // Время для анимации антигравитационных астероидов
 
       // Set canvas size
       canvas.width = 1920;
@@ -370,9 +397,12 @@
         bullets: [],
         results: [],
         killLog: [], // Инициализируем killLog как пустой массив
+        roomCode: null, // Инициализируем roomCode
       };
 
-      const ws = new WebSocket(`ws://${window.location.host}/display`);
+      // Display client connects without room selection - it will receive room code from gameState
+      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const ws = new WebSocket(`${protocol}//${window.location.host}/display`);
 
       ws.onopen = () => {
         connectionStatusEl.textContent = "Подключено";
@@ -382,9 +412,47 @@
       ws.onmessage = (event) => {
         const message = JSON.parse(event.data);
 
+        // Обрабатываем получение кода комнаты
+        if (message.type === "roomCode") {
+          const roomCodeDisplayEl = document.getElementById("roomCodeDisplay");
+          const roomCodeHintEl = document.getElementById("roomCodeHint");
+          if (roomCodeDisplayEl) {
+            roomCodeDisplayEl.textContent = message.roomCode;
+            roomCodeDisplayEl.style.display = "block";
+          }
+          if (roomCodeHintEl) {
+            roomCodeHintEl.style.display = "block";
+          }
+          // Сохраняем код в gameState для последующего использования
+          if (!gameState.roomCode) {
+            gameState.roomCode = message.roomCode;
+          }
+          // Показываем лобби, чтобы код был виден
+          lobbyEl.style.display = "block";
+          waitingEl.style.display = "none";
+          console.log("Room code received:", message.roomCode);
+        }
+
         if (message.type === "gameState") {
           const previousKillLogLength = lastKillLogLength;
+          // Сохраняем roomCode перед обновлением gameState
+          const savedRoomCode = gameState.roomCode;
           gameState = message.data;
+          // Восстанавливаем roomCode, если он был установлен ранее и не пришел в gameState
+          if (savedRoomCode && !gameState.roomCode) {
+            gameState.roomCode = savedRoomCode;
+          }
+          // Убеждаемся, что players - это массив
+          if (!Array.isArray(gameState.players)) {
+            console.warn("gameState.players is not an array, resetting to []");
+            gameState.players = [];
+          }
+
+          // Логируем получение gameState для отладки
+          const connectedPlayers = gameState.players.filter((p) => p.connected);
+          console.log(
+            `Received gameState: total players: ${gameState.players.length}, connected: ${connectedPlayers.length}`
+          );
 
           // Debug: log nextRoundTime if present
           if (gameState.nextRoundTime) {
@@ -427,9 +495,24 @@
             gameState: gameState.state,
           });
 
+          // Обновляем отображение кода комнаты из gameState
+          if (gameState.roomCode) {
+            const roomCodeDisplayEl =
+              document.getElementById("roomCodeDisplay");
+            const roomCodeHintEl = document.getElementById("roomCodeHint");
+            if (roomCodeDisplayEl) {
+              roomCodeDisplayEl.textContent = gameState.roomCode;
+              roomCodeDisplayEl.style.display = "block";
+            }
+            if (roomCodeHintEl) {
+              roomCodeHintEl.style.display = "block";
+            }
+          }
+
           // Update status based on game state
           if (gameState.state === "lobby") {
             connectionStatusEl.textContent = "Лобби - ожидание игроков";
+            console.log("Game state is lobby, calling updateLobby()");
             updateLobby();
             lastKillLogLength = 0; // Сбрасываем при переходе в лобби
             if (killLogEl) killLogEl.innerHTML = ""; // Очищаем килл-лог
@@ -461,35 +544,89 @@
       };
 
       function updateLobby() {
-        const connectedPlayers = gameState.players.filter((p) => p.connected);
+        // Убеждаемся, что players - это массив
+        if (!Array.isArray(gameState.players)) {
+          console.warn("gameState.players is not an array:", gameState.players);
+          gameState.players = [];
+        }
 
-        if (connectedPlayers.length === 0) {
-          lobbyEl.style.display = "none";
-          waitingEl.style.display = "block";
-        } else {
+        const connectedPlayers = gameState.players.filter((p) => p.connected);
+        console.log(
+          "Update lobby - total players:",
+          gameState.players.length,
+          "connected:",
+          connectedPlayers.length
+        );
+
+        // Показываем лобби, если есть код комнаты или есть игроки
+        if (gameState.roomCode || connectedPlayers.length > 0) {
           lobbyEl.style.display = "block";
           waitingEl.style.display = "none";
+        } else {
+          lobbyEl.style.display = "none";
+          waitingEl.style.display = "block";
+        }
 
-          // Update players list
-          lobbyPlayersListEl.innerHTML = "";
-          connectedPlayers.forEach((player) => {
-            const item = document.createElement("div");
-            item.className = "lobbyPlayerItem";
-            item.innerHTML = `
-              <div class="lobbyPlayerColor" style="background: ${player.color}"></div>
-              <span>${player.name}</span>
-            `;
-            lobbyPlayersListEl.appendChild(item);
-          });
-
-          // Update status message
-          if (connectedPlayers.length < 2) {
-            lobbyStatusEl.textContent = `Ожидание игроков... (${connectedPlayers.length}/2)`;
-            startButtonEl.style.display = "none";
-          } else {
-            lobbyStatusEl.textContent = `Игроков готово: ${connectedPlayers.length}`;
-            startButtonEl.style.display = "block";
+        // Update room code display
+        const roomCodeDisplayEl = document.getElementById("roomCodeDisplay");
+        const roomCodeHintEl = document.getElementById("roomCodeHint");
+        if (gameState.roomCode && roomCodeDisplayEl) {
+          roomCodeDisplayEl.textContent = gameState.roomCode;
+          roomCodeDisplayEl.style.display = "block";
+          if (roomCodeHintEl) {
+            roomCodeHintEl.style.display = "block";
           }
+        } else if (roomCodeDisplayEl) {
+          roomCodeDisplayEl.style.display = "none";
+          if (roomCodeHintEl) {
+            roomCodeHintEl.style.display = "none";
+          }
+        }
+
+        // Update players list
+        if (!lobbyPlayersListEl) {
+          console.error("lobbyPlayersListEl is null!");
+          return;
+        }
+
+        lobbyPlayersListEl.innerHTML = "";
+        console.log(
+          "Updating players list, connected players:",
+          connectedPlayers.length
+        );
+        connectedPlayers.forEach((player) => {
+          console.log(
+            "Adding player to list:",
+            player.name,
+            player.color,
+            "connected:",
+            player.connected
+          );
+          const item = document.createElement("div");
+          item.className = "lobbyPlayerItem";
+          item.innerHTML = `
+            <div class="lobbyPlayerColor" style="background: ${player.color}"></div>
+            <span>${player.name}</span>
+          `;
+          lobbyPlayersListEl.appendChild(item);
+        });
+
+        console.log(
+          "Players list updated, children count:",
+          lobbyPlayersListEl.children.length
+        );
+
+        if (connectedPlayers.length === 0) {
+          console.warn("No connected players to display in lobby");
+        }
+
+        // Update status message
+        if (connectedPlayers.length < 2) {
+          lobbyStatusEl.textContent = `Ожидание игроков... (${connectedPlayers.length}/2)`;
+          startButtonEl.style.display = "none";
+        } else {
+          lobbyStatusEl.textContent = `Игроков готово: ${connectedPlayers.length}`;
+          startButtonEl.style.display = "block";
         }
       }
 
@@ -604,7 +741,163 @@
         ctx.restore();
       }
 
+      function drawCollectable(x, y, type) {
+        ctx.save();
+        ctx.imageSmoothingEnabled = false;
+
+        const size = 20;
+        let fillColor = "#ffffff";
+        let strokeColor = "#000000";
+        let icon = "?";
+
+        switch (type) {
+          case "reverseTurn":
+            fillColor = "#ff6b6b";
+            strokeColor = "#cc0000";
+            icon = "↻";
+            break;
+          case "laser":
+            fillColor = "#ff00ff";
+            strokeColor = "#9900cc";
+            icon = "⚡";
+            break;
+          case "shield":
+            fillColor = "#4ecdc4";
+            strokeColor = "#006666";
+            icon = "🛡";
+            break;
+          case "laserBlade":
+            fillColor = "#ffe66d";
+            strokeColor = "#cc9900";
+            icon = "⚔";
+            break;
+        }
+
+        // Фон
+        ctx.fillStyle = fillColor;
+        ctx.fillRect(x - size / 2, y - size / 2, size, size);
+
+        // Обводка
+        ctx.strokeStyle = strokeColor;
+        ctx.lineWidth = 2;
+        ctx.strokeRect(x - size / 2, y - size / 2, size, size);
+
+        // Иконка
+        ctx.fillStyle = "#000000";
+        ctx.font = "bold 14px Arial";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(icon, x, y);
+
+        ctx.restore();
+      }
+
+      function drawWall(x1, y1, x2, y2, destructible) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.strokeStyle = destructible ? "#ff6600" : "#ffffff"; // Оранжевый для разрушаемых, белый для обычных
+        ctx.lineWidth = 8;
+        ctx.lineCap = "round";
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      function drawAsteroid(x, y, radius, type) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(x, y, radius, 0, Math.PI * 2);
+        ctx.fillStyle = "#444444"; // Default for EMPTY
+        ctx.strokeStyle = "#888888";
+        ctx.lineWidth = 2;
+
+        if (type === "orange") {
+          ctx.fillStyle = "#ff8800";
+          ctx.strokeStyle = "#cc6600";
+        } else if (type === "antigravity") {
+          ctx.fillStyle = "#6666ff";
+          ctx.strokeStyle = "#3333cc";
+          ctx.setLineDash([5, 5]); // Пунктирная обводка для антигравитационных
+        }
+
+        ctx.fill();
+        ctx.stroke();
+        ctx.setLineDash([]); // Сброс пунктира
+
+        // Добавляем анимацию расходящихся кругов для антигравитационных
+        if (type === "antigravity") {
+          // Эффект свечения
+          ctx.shadowBlur = 10;
+          ctx.shadowColor = "#6666ff";
+          ctx.fillStyle = "#6666ff";
+          ctx.globalAlpha = 0.3;
+          ctx.beginPath();
+          ctx.arc(x, y, radius + 5, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.globalAlpha = 1;
+          ctx.shadowBlur = 0;
+
+          // Расходящиеся круги (анимация отталкивания)
+          const waveCount = 3; // Количество волн
+          const waveSpeed = 0.02; // Скорость распространения волн
+          const maxWaveRadius = radius * 3; // Максимальный радиус волны
+          const waveSpacing = maxWaveRadius / waveCount; // Расстояние между волнами
+
+          for (let i = 0; i < waveCount; i++) {
+            // Вычисляем фазу волны (0-1)
+            const wavePhase =
+              (animationTime * waveSpeed + i * (1 / waveCount)) % 1;
+            const waveRadius = radius + wavePhase * maxWaveRadius;
+
+            // Прозрачность уменьшается с расстоянием
+            const alpha = Math.max(0, 1 - wavePhase * 1.5);
+
+            if (alpha > 0 && waveRadius > radius) {
+              ctx.strokeStyle = "#6666ff";
+              ctx.lineWidth = 2;
+              ctx.globalAlpha = alpha * 0.6;
+              ctx.setLineDash([4, 4]);
+              ctx.beginPath();
+              ctx.arc(x, y, waveRadius, 0, Math.PI * 2);
+              ctx.stroke();
+              ctx.setLineDash([]);
+            }
+          }
+
+          ctx.globalAlpha = 1;
+        }
+
+        ctx.restore();
+      }
+
+      function drawPilot(x, y, angle, color) {
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(angle);
+
+        const SHIP_SIZE = 30; // Размер корабля
+        const pilotSize = SHIP_SIZE / 4;
+
+        // Рисуем маленький треугольник (пилот)
+        ctx.fillStyle = color;
+        ctx.strokeStyle = "#000000";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(pilotSize, 0); // Нос
+        ctx.lineTo(-pilotSize * 0.6, -pilotSize * 0.5); // Левая точка
+        ctx.lineTo(-pilotSize * 0.6, pilotSize * 0.5); // Правая точка
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.restore();
+      }
+
       function gameLoop() {
+        // Обновляем время анимации
+        animationTime += 1;
+
         // Clear canvas
         ctx.fillStyle = "#0a0a1a";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -614,22 +907,96 @@
 
         // Draw bullets
         gameState.bullets.forEach((bullet) => {
-          drawBullet(bullet.x, bullet.y);
+          // Лазерные пули рисуем другим цветом
+          if (bullet.laser) {
+            ctx.save();
+            ctx.fillStyle = "#ff00ff";
+            ctx.fillRect(bullet.x - 4, bullet.y - 4, 8, 8);
+            ctx.strokeStyle = "#ffffff";
+            ctx.lineWidth = 2;
+            ctx.strokeRect(bullet.x - 4, bullet.y - 4, 8, 8);
+            ctx.restore();
+          } else {
+            drawBullet(bullet.x, bullet.y);
+          }
         });
+
+        // Draw collectables
+        if (gameState.collectables && gameState.state === "playing") {
+          gameState.collectables.forEach((collectable) => {
+            drawCollectable(collectable.x, collectable.y, collectable.type);
+          });
+        }
+
+        // Draw walls
+        if (gameState.walls && gameState.state === "playing") {
+          gameState.walls.forEach((wall) => {
+            drawWall(wall.x1, wall.y1, wall.x2, wall.y2, wall.destructible);
+          });
+        }
+
+        // Draw asteroids
+        if (gameState.asteroids && gameState.state === "playing") {
+          gameState.asteroids.forEach((asteroid) => {
+            drawAsteroid(
+              asteroid.x,
+              asteroid.y,
+              asteroid.radius,
+              asteroid.type
+            );
+          });
+        }
+
+        // Draw pilots
+        if (gameState.pilots && gameState.state === "playing") {
+          gameState.pilots.forEach((pilot) => {
+            const player = gameState.players.find(
+              (p) => p.id === pilot.playerId
+            );
+            if (player) {
+              drawPilot(pilot.x, pilot.y, pilot.angle, player.color);
+            }
+          });
+        }
 
         // Draw players
         // Draw players (only during playing state)
         if (gameState.state === "playing") {
-          gameState.players.forEach((player) => {
-            drawShip(
-              player.x,
-              player.y,
-              player.angle,
-              player.color,
-              player.alive,
-              player.name,
-              player.connected
+          console.log("Drawing players, count:", gameState.players.length);
+          if (!Array.isArray(gameState.players)) {
+            console.warn(
+              "gameState.players is not an array during playing state"
             );
+            gameState.players = [];
+          }
+          gameState.players.forEach((player) => {
+            if (player && player.connected) {
+              console.log(
+                `Drawing player ${player.name} at (${player.x}, ${player.y}), alive: ${player.alive}, connected: ${player.connected}`
+              );
+              // Проверяем, что координаты валидны
+              if (isNaN(player.x) || isNaN(player.y)) {
+                console.warn(
+                  `Invalid coordinates for player ${player.name}: x=${player.x}, y=${player.y}`
+                );
+                return;
+              }
+              drawShip(
+                player.x,
+                player.y,
+                player.angle,
+                player.color,
+                player.alive,
+                player.name,
+                player.connected
+              );
+            } else {
+              console.log(
+                `Skipping player ${player?.name || "unknown"}: connected=${
+                  player?.connected
+                }`
+              );
+            }
           });
         }
 
@@ -853,21 +1220,21 @@
           Array.isArray(gameState.killLog) &&
           gameState.killLog.length > 0
         ) {
-          // Параметры сетки (на основе стиля всплывающего килл-лога)
-          const killLogColumns = 3; // Количество колонок
-          const killLogEntryPadding = 12; // Padding сверху/снизу (как в CSS: 12px)
-          const killLogEntryPaddingX = 16; // Padding слева/справа (как в CSS: 16px)
-          const killLogBorderLeft = 4; // Левая граница (как в CSS: 4px)
-          const killLogEntryHeight = 40; // Высота записи (12px padding * 2 + 16px текст)
-          const killLogGap = 8; // Отступ между записями (как gap в CSS)
-          const killLogMaxEntries = 30; // Максимум записей для отображения
+          // Параметры сетки (адаптивные для большого количества игроков)
+          const killLogColumns = 4; // Увеличиваем количество колонок
+          const killLogEntryPadding = 8; // Уменьшаем padding
+          const killLogEntryPaddingX = 12; // Уменьшаем padding
+          const killLogBorderLeft = 3; // Уменьшаем границу
+          const killLogEntryHeight = 32; // Уменьшаем высоту записи
+          const killLogGap = 6; // Уменьшаем отступ между записями
+          const killLogMaxEntries = 40; // Увеличиваем максимум записей
           const killLogEntriesToShow = gameState.killLog.slice(
             -killLogMaxEntries
           ); // Последние N записей
 
-          // Вычисляем ширину одной ячейки (на основе max-width: 400px из CSS)
-          // Но делаем немного уже для сетки из 3 колонок
-          const killLogEntryWidth = 380;
+          // Вычисляем ширину одной ячейки (адаптивная ширина)
+          const killLogEntryWidth =
+            (canvas.width * 0.85) / killLogColumns - killLogGap;
 
           // Вычисляем количество строк
           const killLogRows = Math.ceil(
@@ -881,29 +1248,36 @@
           const killLogTotalHeight =
             killLogRows * killLogEntryHeight + (killLogRows - 1) * killLogGap;
           const killLogX = (canvas.width - killLogTotalWidth) / 2; // Центрируем
-          const killLogY =
-            startY + gameState.results.length * (cardHeight + 15) + 50;
 
-          // Заголовок
+          // Вычисляем Y позицию с учетом доступного места
+          const resultsEndY =
+            startY + gameState.results.length * (cardHeight + 15);
+          const availableHeight = canvas.height - resultsEndY - 150; // Оставляем место для таймера
+          const killLogY = Math.min(
+            resultsEndY + 50,
+            canvas.height - killLogTotalHeight - 150
+          );
+
+          // Заголовок (уменьшаем размер шрифта)
           ctx.fillStyle = "#fff";
-          ctx.font = "bold 28px Arial";
+          ctx.font = "bold 24px Arial";
           ctx.textAlign = "center";
           ctx.fillText(
             "📋 Килл-лог раунда",
             killLogX + killLogTotalWidth / 2,
-            killLogY + 30
+            killLogY + 20
           );
 
           // Разделительная линия под заголовком
           ctx.strokeStyle = "rgba(255, 255, 255, 0.2)";
           ctx.lineWidth = 1;
           ctx.beginPath();
-          ctx.moveTo(killLogX, killLogY + 50);
-          ctx.lineTo(killLogX + killLogTotalWidth, killLogY + 50);
+          ctx.moveTo(killLogX, killLogY + 40);
+          ctx.lineTo(killLogX + killLogTotalWidth, killLogY + 40);
           ctx.stroke();
 
           // Записи в виде сетки
-          const killLogStartY = killLogY + 70;
+          const killLogStartY = killLogY + 55;
           killLogEntriesToShow.forEach((kill, index) => {
             // Вычисляем позицию в сетке
             const col = index % killLogColumns;
@@ -920,42 +1294,60 @@
             ctx.fillStyle = kill.killerColor;
             ctx.fillRect(x, y, killLogBorderLeft, killLogEntryHeight);
 
-            // Текст внутри записи
-            const textY = y + killLogEntryPadding + 16; // Padding сверху + высота текста
+            // Текст внутри записи (уменьшаем размер шрифта)
+            const textY = y + killLogEntryHeight / 2;
 
-            // Имя убийцы (слева)
+            // Усекаем имена, если они слишком длинные
+            const maxTextWidth =
+              killLogEntryWidth -
+              killLogEntryPaddingX * 2 -
+              killLogBorderLeft -
+              20;
+            const textX = x + killLogBorderLeft + killLogEntryPaddingX;
+
+            // Имя убийцы
             ctx.fillStyle = kill.killerColor;
-            ctx.font = "bold 16px Arial";
+            ctx.font = "14px Arial";
             ctx.textAlign = "left";
-            const killerName =
-              kill.killerName.length > 20
-                ? kill.killerName.substring(0, 18) + "..."
-                : kill.killerName;
-            ctx.fillText(
-              killerName,
-              x + killLogBorderLeft + killLogEntryPaddingX,
-              textY
-            );
+            let killerText = kill.killerName;
+            let killerWidth = ctx.measureText(killerText).width;
+            if (killerWidth > maxTextWidth / 2) {
+              // Усекаем имя убийцы
+              while (
+                ctx.measureText(killerText + "...").width > maxTextWidth / 2 &&
+                killerText.length > 0
+              ) {
+                killerText = killerText.slice(0, -1);
+              }
+              killerText += "...";
+              killerWidth = ctx.measureText(killerText).width;
+            }
+            ctx.fillText(killerText, textX, textY);
 
-            // Иконка (по центру)
+            // Иконка
             ctx.fillStyle = "rgba(255, 255, 255, 0.7)";
-            ctx.font = "20px Arial";
-            ctx.textAlign = "center";
-            ctx.fillText("⚔️", x + killLogEntryWidth / 2, textY);
+            const iconText = "⚔️";
+            const iconWidth = ctx.measureText(iconText).width;
+            ctx.fillText(iconText, textX + killerWidth + 4, textY);
 
-            // Имя жертвы (справа)
+            // Имя жертвы
             ctx.fillStyle = kill.victimColor;
-            ctx.font = "bold 16px Arial";
-            ctx.textAlign = "right";
-            const victimName =
-              kill.victimName.length > 20
-                ? kill.victimName.substring(0, 18) + "..."
-                : kill.victimName;
-            ctx.fillText(
-              victimName,
-              x + killLogEntryWidth - killLogEntryPaddingX,
-              textY
-            );
+            let victimText = kill.victimName;
+            const victimX = textX + killerWidth + iconWidth + 8;
+            const maxVictimWidth =
+              x + killLogEntryWidth - killLogEntryPaddingX - victimX;
+            let victimWidth = ctx.measureText(victimText).width;
+            if (victimWidth > maxVictimWidth) {
+              // Усекаем имя жертвы
+              while (
+                ctx.measureText(victimText + "...").width > maxVictimWidth &&
+                victimText.length > 0
+              ) {
+                victimText = victimText.slice(0, -1);
+              }
+              victimText += "...";
+            }
+            ctx.fillText(victimText, victimX, textY);
           });
 
           // Если записей больше, чем отображается, показываем подсказку

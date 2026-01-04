@@ -1,4 +1,4 @@
-export declare const MAX_PLAYERS = 10;
+export declare const MAX_PLAYERS = 15;
 export declare const GAME_WIDTH = 1920;
 export declare const GAME_HEIGHT = 1080;
 export declare const ACCELERATION = 0.15;
@@ -19,8 +19,21 @@ export declare const SHIP_MASS = 1;
 export declare const PLAYER_COLORS: string[];
 export declare const GAME_FPS = 60;
 export declare const ROUND_END_DELAY = 10000;
-export declare const LOBBY_DELAY = 3000;
 export declare const DOUBLE_TAP_TIME = 300;
 export declare const DRIFT_ANGLE: number;
 export declare const DRIFT_BOOST = 8;
+export declare const COLLECTABLE_SIZE = 20;
+export declare const COLLECTABLE_SPAWN_INTERVAL = 20000;
+export declare const COLLECTABLE_SPAWN_CHANCE = 0.25;
+export declare const REVERSE_TURN_DURATION = 5000;
+export declare const LASER_BACKWARD_FORCE = 3;
+export declare const COLLECTABLE_COLLECTION_DISTANCE = 40;
+export declare const WALL_THICKNESS = 10;
+export declare const ASTEROID_MIN_RADIUS = 15;
+export declare const ASTEROID_MAX_RADIUS = 25;
+export declare const ASTEROID_COUNT = 8;
+export declare const WALL_COUNT = 5;
+export declare const DESTRUCTIBLE_WALL_COUNT = 10;
+export declare const ANTIGRAVITY_FORCE = 0.5;
+export declare const ANTIGRAVITY_RANGE = 200;
 //# sourceMappingURL=game-constants.d.ts.map

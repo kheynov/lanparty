@@ -4,7 +4,7 @@ import http from "http";
 import path from "path";
 import { fileURLToPath } from "url";
 import crypto from "crypto";
-import { GameManager } from "./game-manager.js";
+import { RoomManager } from "./room-manager.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const app = express();
@@ -25,27 +25,96 @@ app.get("/", (_req, res) => {
 });
 // WebSocket server
 const wss = new WebSocketServer({ server });
-const gameManager = new GameManager();
+const roomManager = new RoomManager();
+// Временно: создаем одну общую комнату для всех
+const DEFAULT_ROOM_CODE = "DEFAULT";
+const defaultRoomCode = roomManager.createRoom();
+const defaultGameManager = roomManager.getRoom(defaultRoomCode);
+defaultGameManager.setRoomCode(DEFAULT_ROOM_CODE);
+// Добавляем маппинг для DEFAULT кода
+roomManager.getAllRooms().set(DEFAULT_ROOM_CODE, defaultGameManager);
+roomManager.getAllRooms().delete(defaultRoomCode);
 wss.on("connection", (ws, req) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
     const isControl = url.pathname === "/control" || url.pathname === "/mobile";
     const isDisplay = url.pathname === "/display" || url.pathname === "/";
     ws.isControl = isControl;
     ws.isDisplay = isDisplay;
+    ws.roomCode = null;
+    // Временно: все подключаются к одной общей комнате
+    const defaultRoomCode = "DEFAULT";
+    const gameManager = roomManager.getRoom(defaultRoomCode);
+    if (!gameManager) {
+        console.error("Default room not found! This should not happen.");
+        ws.close();
+        return;
+    }
+    ws.roomCode = defaultRoomCode;
     gameManager.addClient(ws);
     if (isControl) {
         ws.playerId = null;
-        console.log("Control client connected, waiting for registration");
+        console.log("Control client connected to default room");
     }
     else if (isDisplay) {
-        console.log("Display connected");
+        console.log("Display connected to default room");
+        ws.send(JSON.stringify({
+            type: "roomCode",
+            roomCode: defaultRoomCode,
+        }));
+        gameManager.broadcastGameState();
     }
     ws.on("message", (message) => {
         try {
-            const data = JSON.parse(message.toString());
+            const messageStr = message.toString().trim();
+            if (!messageStr) {
+                console.log("Received empty message");
+                return;
+            }
+            let data;
+            try {
+                data = JSON.parse(messageStr);
+            }
+            catch (parseError) {
+                console.error("Error parsing JSON message:", parseError);
+                console.error("Message content:", messageStr.substring(0, 100));
+                console.error("Full message length:", messageStr.length);
+                // Проверяем, не является ли это старым форматом сообщения (например, "Player$uuid")
+                if (messageStr.includes("$") && messageStr.length < 100) {
+                    console.warn("Received message in old format, ignoring:", messageStr);
+                    // Это может быть старая версия клиента, пытающаяся отправить имя и UUID напрямую
+                    // Игнорируем такие сообщения
+                }
+                // Не отправляем ошибку клиенту, если это невалидный JSON - просто игнорируем
+                return;
+            }
+            // Валидация типа сообщения
+            if (!data || typeof data !== "object" || !data.type) {
+                console.error("Invalid message structure:", data);
+                return;
+            }
+            // Временно отключена механика joinRoom - все подключаются к одной комнате
+            // Handle joinRoom - игнорируем, все уже в одной комнате
+            if (data.type === "joinRoom") {
+                // Просто отправляем подтверждение, что комната уже выбрана
+                ws.send(JSON.stringify({
+                    type: "roomCode",
+                    roomCode: ws.roomCode || "DEFAULT",
+                }));
+                return;
+            }
+            // Get game manager for this client's room (всегда DEFAULT)
+            const defaultRoomCode = ws.roomCode || "DEFAULT";
+            const gameManager = roomManager.getRoom(defaultRoomCode);
+            if (!gameManager) {
+                ws.send(JSON.stringify({
+                    type: "error",
+                    message: "Комната не найдена",
+                }));
+                return;
+            }
             // Handle startGame for both display and control clients
             if (data.type === "startGame") {
-                console.log(`startGame received from ${ws.isDisplay ? "display" : "control"} client`);
+                console.log(`startGame received from ${ws.isDisplay ? "display" : "control"} client in room ${ws.roomCode}`);
                 console.log(`Current game state: ${gameManager.getState()}`);
                 if (gameManager.getState() === "lobby") {
                     const connectedPlayers = Array.from(gameManager.getPlayers().values()).filter((p) => p.connected);
@@ -119,8 +188,10 @@ wss.on("connection", (ws, req) => {
                             uuid: uuid,
                             color: player.color,
                         }));
-                        gameManager.broadcastGameState();
                         console.log(`Player ${name} (${playerId}) connected. Total players: ${gameManager.getPlayers().size}`);
+                        // Отправляем обновленное состояние игры всем клиентам
+                        gameManager.broadcastGameState();
+                        console.log("Game state broadcasted after player registration");
                     }
                 }
                 else if (data.type === "disconnect") {
@@ -162,11 +233,21 @@ wss.on("connection", (ws, req) => {
         }
     });
     ws.on("close", () => {
-        if (isControl && ws.playerId) {
-            gameManager.disconnectPlayer(ws.playerId);
-            console.log(`Player ${ws.playerId} disconnected.`);
+        if (ws.roomCode) {
+            const gameManager = roomManager.getRoom(ws.roomCode);
+            if (gameManager) {
+                if (isControl && ws.playerId) {
+                    gameManager.disconnectPlayer(ws.playerId);
+                    console.log(`Player ${ws.playerId} disconnected from room ${ws.roomCode}.`);
+                }
+                gameManager.removeClient(ws);
+                // Check if room is empty and remove it
+                const allClients = Array.from(gameManager.getClients?.() || []);
+                if (allClients.length === 0) {
+                    roomManager.removeRoom(ws.roomCode);
+                }
+            }
         }
-        gameManager.removeClient(ws);
     });
 });
 const PORT = process.env.PORT || 3000;
